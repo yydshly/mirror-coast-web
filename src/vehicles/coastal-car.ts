@@ -11,11 +11,10 @@ import { clipVehicleCamera } from './chase-camera';
 import { Material } from '../world/palette';
 import { REGION_ROADS } from '../world/region-layout';
 import {CAR_FORWARD_SPEED,CAR_REVERSE_SPEED,type CarSignal} from './driving-tuning';
-import {SEA_LEVEL} from '../world/sea-level';
+import {SEA_LEVEL,MAX_WADING_DEPTH} from '../world/sea-level';
 
 export const CAR_SPAWN = { x: 248, y: 16.85, z: 164 };
 const RIDE_HEIGHT = .85, HALF_WIDTH = .97, HALF_LENGTH = 2.35;
-const MAX_WADING_DEPTH=.35;
 const WHEEL_X=.95, WHEEL_Z=1.43, WHEEL_RADIUS=.39;
 const SHELL_GROUND_BOXES=[
  {center:{x:0,y:-.075,z:-1.73},half:{x:.85,y:.23,z:.46}},

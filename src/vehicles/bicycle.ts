@@ -10,6 +10,10 @@ import {bicycleRiderBounds} from './bicycle-collision';
 import{bicycleWallCorrection}from'./bicycle-wall-contact';
 import type {Vec3} from '../destruction/types';
 import {findLocalRecovery,VehicleStallWatch} from './recovery';
+import {SEA_LEVEL,MAX_WADING_DEPTH} from '../world/sea-level';
+import {recoveryRoadPoints} from '../world/recovery-roads';
+import {Material} from '../world/palette';
+import {WORLD_HEIGHT} from '../world/voxel';
 
 export const BICYCLE_SPAWN={x:114,y:16,z:169.8};
 export type BicycleState={position:Vec3;heading:number;riding:boolean};
@@ -23,7 +27,7 @@ export class Bicycle{
   private footDown=1;private mountRemaining=0;private stopRequested=false;private pedaling=false;
   private driveHeld=false;
   private readonly stall=new VehicleStallWatch();
-  private recoveryProvider:(()=>readonly SceneObstacle[])|undefined;
+  private recoveryProvider:((position:Vec3)=>readonly SceneObstacle[])|undefined;
   private blocked='';private input:{throttle:number;steer:number;brake:boolean}|undefined;
   private provider:()=>readonly SceneObstacle[]=()=>[];private nearby:readonly SceneObstacle[]=[];
   private motorNearby:readonly SceneObstacle[]=[];
@@ -51,7 +55,7 @@ export class Bicycle{
   }
   get position(){return this.motor.position;}
   get viewState():BicycleViewState{
-    const notice=this.stall.stuck?'持续受阻 · 按 G 挪到附近安全地面':this.blocked||(this.stopRequested?'正在刹车，停稳后下车…':this.mountRemaining>0?'收起脚撑、脚回到踏板后出发…':'');
+    const notice=this.blocked.includes('深水')?this.blocked:this.stall.stuck?'持续受阻 · 按 G 挪到附近安全地面':this.blocked||(this.stopRequested?'正在刹车，停稳后下车…':this.mountRemaining>0?'收起脚撑、脚回到踏板后出发…':'');
     return {riding:this.riding,speed:this.speed,blocked:notice,grounded:this.motor.grounded,pedaling:this.pedaling,standDeployed:this.model.standDeployed,phase:this.phase,wheelAngle:this.wheelAngle,footDown:this.footDown,stopping:this.stopRequested};
   }
   get orbitState(){return this.orbit.state;}
@@ -63,36 +67,43 @@ export class Bicycle{
   }
   requestDismount(){this.stopRequested=true;this.keys.clear();this.input=undefined;}
   setObstacleProvider(p:()=>readonly SceneObstacle[]){this.provider=p;this.nearby=p();this.motorNearby=this.nearby.filter(b=>b.pedestrianId===undefined);}
-  setRecoveryObstacleProvider(p:()=>readonly SceneObstacle[]){this.recoveryProvider=p;}
+  setRecoveryObstacleProvider(p:(position:Vec3)=>readonly SceneObstacle[]){this.recoveryProvider=p;}
   /** Validate both tyres and the whole bicycle/rider, including overhead props.
    * Recovery can rotate the bike into an opening; it never edits its obstacles. */
   recoverNearby():boolean{
     const previous=this.nearby,previousMotor=this.motorNearby;
-    this.nearby=this.recoveryProvider?.()??this.provider();this.motorNearby=this.nearby;
     const origin=this.position.clone(),bounds=this.world.bounds;
-    const result=findLocalRecovery(origin,this.heading,p=>{
+    const resolve=(p:Vec3,road=false)=>{
       if(p.x<bounds.minX+1.2||p.x>bounds.maxX-1.2||p.z<bounds.minZ+1.2||p.z>bounds.maxZ-1.2)return null;
-      const y=this.floorAt(p.x,p.z);if(y===null||y<=12)return null;
-      for(const heading of [this.heading,this.heading+Math.PI/2,this.heading-Math.PI/2]){
+      this.nearby=this.recoveryProvider?.(p)??this.provider();this.motorNearby=this.nearby;
+      const y=this.floorAt(p.x,p.z,road?WORLD_HEIGHT:Math.max(origin.y,SEA_LEVEL+4),road?WORLD_HEIGHT:6);if(y===null||y<SEA_LEVEL)return null;
+      if(road&&![Material.Road,Material.Stripe,Material.Concrete].includes(this.world.getVoxel(Math.floor(p.x),Math.round(y)-1,Math.floor(p.z)) as never))return null;
+      for(const heading of [this.heading,this.heading+Math.PI,this.heading+Math.PI/2,this.heading-Math.PI/2]){
         const candidate={x:p.x,y,z:p.z},support=this.wheelSupport(candidate,heading);
         if(!support||Math.abs(support.pitch)>.2)continue;candidate.y=support.y;
         if(!this.motor.canOccupy(candidate))continue;
-        const body=orientedCollisionBounds({x:p.x,y:support.y+1.2,z:p.z},
-          new Quaternion().setFromEuler(new Euler(support.pitch,heading,0,'YXZ')),{x:.4,y:1.16,z:1.1});
-        if(this.nearby.some(b=>obstaclesIntersect(body,b)))continue;
-        let clear=true;
-        for(let iy=Math.floor(body.minY);iy<=Math.floor(body.maxY)&&clear;iy++)for(let iz=Math.floor(body.minZ);iz<=Math.floor(body.maxZ)&&clear;iz++)for(let ix=Math.floor(body.minX);ix<=Math.floor(body.maxX);ix++){
-          if(this.world.getVoxel(ix,iy,iz)&&obstaclesIntersect(body,{minX:ix,maxX:ix+1,minY:iy,maxY:iy+1,minZ:iz,maxZ:iz+1})){clear=false;break;}
+        let clear=this.recoveryBodyClear(candidate,heading,support.pitch);
+        if(clear)for(const distance of [.8,1.6]){
+          const next={x:p.x-Math.sin(heading)*distance,y:support.y,z:p.z-Math.cos(heading)*distance},s=this.wheelSupport(next,heading);
+          if(!s||s.y<SEA_LEVEL||Math.abs(s.y-support.y)>.35||!this.motor.canOccupy({...next,y:s.y})||!this.recoveryBodyClear({...next,y:s.y},heading,s.pitch)){clear=false;break;}
         }
         if(clear)return{position:candidate,heading};
       }return null;
-    });
+    };
+    let result=findLocalRecovery(origin,this.heading,p=>resolve(p),[0],[0,1,2,4,6,10,16,24,32]);
+    if(!result)for(const p of recoveryRoadPoints(origin)){result=resolve({...p,y:WORLD_HEIGHT},true);if(result)break;}
     if(result){
-      this.releaseControls();this.motor.stop();this.position.copy(result.position);this.heading=result.heading;this.steer=0;this.mountRemaining=0;this.footDown=1;
+      this.releaseControls();this.motor.teleportEye({...result.position,y:result.position.y+1.68});this.heading=result.heading;this.steer=0;this.mountRemaining=0;this.footDown=1;
       this.motor.grounded=true;this.blocked='';this.stall.reset();this.ready=false;this.render(0);
     }
     this.nearby=previous;this.motorNearby=previousMotor;
     return !!result;
+  }
+  private recoveryBodyClear(p:Vec3,heading:number,pitch:number):boolean{
+    const body=orientedCollisionBounds({x:p.x,y:p.y+1.2,z:p.z},new Quaternion().setFromEuler(new Euler(pitch,heading,0,'YXZ')),{x:.4,y:1.16,z:1.1});
+    if(this.nearby.some(b=>obstaclesIntersect(body,b)))return false;
+    for(let y=Math.floor(body.minY);y<=Math.floor(body.maxY);y++)for(let z=Math.floor(body.minZ);z<=Math.floor(body.maxZ);z++)for(let x=Math.floor(body.minX);x<=Math.floor(body.maxX);x++)if(this.world.getVoxel(x,y,z)&&obstaclesIntersect(body,{minX:x,maxX:x+1,minY:y,maxY:y+1,minZ:z,maxZ:z+1}))return false;
+    return true;
   }
   setRiding(active:boolean){
     this.riding=active;this.releaseControls();this.footDown=1;this.mountRemaining=active?.45:0;
@@ -188,7 +199,8 @@ export class Bicycle{
     // angle must not mistake the adjacent wall for yesterday's wheel support.
     for(const direction of [-1,1]){
       const y=this.floorAt(next.x+dx*.74*direction,next.z+dz*.74*direction),previous=this.floorAt(this.position.x-Math.sin(this.heading)*.74*direction,this.position.z-Math.cos(this.heading)*.74*direction);
-      if(y===null||previous===null||y<previous-.65){clear=false;this.blocked='前方断边或水面 · 请下车探索';break;}
+      if(y!==null&&y<SEA_LEVEL-MAX_WADING_DEPTH||y===null&&previous!==null&&previous<=SEA_LEVEL+1.25){clear=false;this.blocked='前方是深水 · S 退回岸边，或按 G 脱困';break;}
+      if(y===null||previous===null||y<previous-.65){clear=false;this.blocked='前方断边或落差过大 · S 退行 / F 下车';break;}
       if(y>previous+.23){clear=false;this.blocked='坡坎过高 · 请下车';break;}
     }
     if(clear&&!this.wheelSupport(next,heading)){clear=false;this.blocked='轮胎前方有陡坎或断边 · S 退行 / F 下车';}
@@ -221,17 +233,17 @@ export class Bicycle{
     this.pedaling=input.throttle>0&&!input.brake&&this.speed>.1;
     this.settleLegs(dt,this.speed<-.05||Math.abs(this.speed)<.12&&input.throttle<=0&&!this.pedaling,this.pedaling?Math.max(1.8,distance/Math.max(dt,.001)/.85):0);
   }
-  private floorAt(x:number,z:number):number|null{
-    const max=this.position.y+1;let top:number|null=null;
-    for(let y=Math.floor(max-1);y>=Math.max(12,Math.floor(this.position.y-2));y--)if(this.world.getVoxel(Math.floor(x),y,Math.floor(z))){top=y+1;break;}
+  private floorAt(x:number,z:number,reference=this.position.y,drop=2):number|null{
+    const max=reference+1;let top:number|null=null;
+    for(let y=Math.floor(max-1);y>=Math.max(0,Math.floor(reference-drop));y--)if(this.world.getVoxel(Math.floor(x),y,Math.floor(z))){top=y+1;break;}
     for(const b of this.nearby)if(b.standable!==false&&x+.05>=b.minX&&x-.05<=b.maxX&&z+.05>=b.minZ&&z-.05<=b.maxZ){
-      const y=obstacleTopAt(b,x,z,.05,max);if(y!==null&&y>=this.position.y-1)top=Math.max(top??-Infinity,y);
+      const y=obstacleTopAt(b,x,z,.05,max);if(y!==null&&y>=reference-1)top=Math.max(top??-Infinity,y);
     }return top;
   }
   private wheelSupport(position:Vec3,heading:number):{y:number;pitch:number}|null{
     const dx=-Math.sin(heading),dz=-Math.cos(heading);let pitch=0,front=position.y,rear=position.y;
     for(let i=0;i<3;i++){
-      const f=this.floorAt(position.x+dx*.76*Math.cos(pitch),position.z+dz*.76*Math.cos(pitch)),r=this.floorAt(position.x-dx*.72*Math.cos(pitch),position.z-dz*.72*Math.cos(pitch));
+      const f=this.floorAt(position.x+dx*.76*Math.cos(pitch),position.z+dz*.76*Math.cos(pitch),position.y),r=this.floorAt(position.x-dx*.72*Math.cos(pitch),position.z-dz*.72*Math.cos(pitch),position.y);
       if(f===null||r===null||Math.abs(f-r)>.65)return null;
       front=f;rear=r;pitch=Math.asin((front-rear)/1.48);
     }

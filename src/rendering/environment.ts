@@ -94,7 +94,7 @@ export class Environment {
         void main() {
           vec4 world = modelMatrix * vec4(position, 1.0);
           vec2 uv=(world.xz-uOrigin)/uSize;
-          float bed=texture2D(uTerrain,clamp(uv,.001,.999)).r*95.;
+          float bed=texture2D(uTerrain,clamp(uv,.001,.999)).r*255.;
           float shelter=.25+.75*smoothstep(.6,4.,${SEA_LEVEL.toFixed(1)}-bed);
           float edge=1.-smoothstep(750.,1100.,max(abs(world.x-128.),abs(world.z-128.)));
           world.y+=(sin(dot(world.xz,vec2(.1692,.0612))-uTime*.58)*.10
@@ -142,7 +142,13 @@ export class Environment {
           vec2 uv = (vWorld.xz - uOrigin) / uSize;
           float inside = step(0.0, uv.x) * step(0.0, uv.y) * step(uv.x, 1.0) * step(uv.y, 1.0);
           vec2 edgeMeters = min(vWorld.xz-uOrigin,uOrigin+uSize-vWorld.xz);
-          float mappedBed = texture2D(uTerrain, clamp(uv, .001, .999)).r * 95.0;
+          // Query the actual voxel-column top at texel centers. Interpolating
+          // across the shoreline lets waves cover dry, walkable y=12 shelves.
+          vec2 columnUV = (floor(vWorld.xz-uOrigin)+.5)/uSize;
+          vec2 halfTexel = .5/uSize;
+          float groundTop = texture2D(uTerrain, clamp(columnUV,halfTexel,1.-halfTexel)).r*255.;
+          if(inside>.5 && groundTop>=${SEA_LEVEL.toFixed(1)}-.01)discard;
+          float mappedBed = texture2D(uTerrain, clamp(uv, .001, .999)).r * 255.0;
           float bed = mix(-24.0, mappedBed, inside * smoothstep(0.0,48.0,min(edgeMeters.x,edgeMeters.y)));
           float depth = max(0.0, ${SEA_LEVEL.toFixed(1)} - bed);
           float waterDistance = length(cameraPosition - vWorld);
@@ -213,7 +219,7 @@ export class Environment {
     const resize = this.bathymetry.length !== width * depth || this.terrain.image.width !== width || this.terrain.image.height !== depth || this.terrainBounds.minX !== b.minX || this.terrainBounds.minZ !== b.minZ;
     const sample = (x: number,z: number) => {
       const index = x - b.minX + (z - b.minZ) * width; this.bathymetry[index] = 0;
-      for (let y = SEA_LEVEL; y >= 0; y--) if (world.getVoxel(x,y,z)) { this.bathymetry[index] = Math.round(y / 95 * 255); break; }
+      for (let y = SEA_LEVEL; y >= 0; y--) if (world.getVoxel(x,y,z)) { this.bathymetry[index] = y+1; break; }
     };
     if (resize || !dirtyKeys) {
       this.bathymetry = new Uint8Array(width * depth);

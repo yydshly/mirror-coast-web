@@ -29,4 +29,5 @@ export type HelicopterViewState = {
   returnPhase?:ReturnPhase;
   returnAltitude?:number;
   recoverySuggested?:boolean;
+  waterStatus?:'low'|'submerged'|null;
 };

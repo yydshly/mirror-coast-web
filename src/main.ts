@@ -501,10 +501,11 @@ async function boot(): Promise<void> {
     onMouseMode: mode => { if (exploration === 'walk') ui.setMouseMode(mode); },
     onViewChange: mode => { ui.setWalkView(mode); savePose(); },
     onFallback: () => ui.toast('拖动画面或按住右键转向；WASD 行走，C 切换视角。'),
-    onRecover: () => ui.toast('回到最近的干燥落脚点'),
+    onRecover: reason => ui.toast(reason==='water'?'前方是深水，已返回最近的岸上落脚点。可沿岸行走或改走栈桥。':'落脚位置被占用，已移到附近安全地面。'),
     onNotice:message=>ui.toast(message),
   }, walkingCamera);
   walker.motor.setObstacleProvider(() => nearbyObstacles);
+  walker.motor.setRecoveryProbe(p=>{nearbyObstacles=nearbyScene(p,16,Infinity);nearbyObstacles.push(...walkTransitions?.nearby(p)??[]);});
   walker.setSeatProvider(()=>[...coastalArt?.seats??[],...streetArt?.seats??[],...regionArt?.seats??[],...southBay?.seats??[]]);
   walker.setEnabled(exploration === 'walk' && !isLab);
   controller.setEnabled(exploration !== 'walk');
@@ -516,7 +517,7 @@ async function boot(): Promise<void> {
   }
   ui.setExploration(exploration === 'walk', currentPlace);
   ui.setWalkView(walker.viewMode);
-  if(dressed&&!isYard){bicycle=new Bicycle(scene,world,canvas,()=>!ui.isHelpOpen&&!ui.isMenuOpen&&!fieldbook?.isOpen&&!signalConsole?.isOpen);bicycle.setObstacleProvider(()=>[...nearbyScene(bicycle!.position,16,8,true,false),...walkTransitions?.nearby(bicycle!.position)??[]]);bicycle.setRecoveryObstacleProvider(()=>[...nearbyScene(bicycle!.position,24,8,true,false),...walkTransitions?.nearby(bicycle!.position)??[]]);if(restoredBicycle)bicycle.restore(restoredBicycle);ui.setBicycleState(bicycle.viewState);}
+  if(dressed&&!isYard){bicycle=new Bicycle(scene,world,canvas,()=>!ui.isHelpOpen&&!ui.isMenuOpen&&!fieldbook?.isOpen&&!signalConsole?.isOpen);bicycle.setObstacleProvider(()=>[...nearbyScene(bicycle!.position,16,8,true,false),...walkTransitions?.nearby(bicycle!.position)??[]]);bicycle.setRecoveryObstacleProvider(p=>[...nearbyScene(p,24,Infinity,true,false),...walkTransitions?.nearby(p)??[]]);if(restoredBicycle)bicycle.restore(restoredBicycle);ui.setBicycleState(bicycle.viewState);}
 
   if(isYard){
     root.classList.add('is-response-yard');
@@ -1217,7 +1218,7 @@ async function boot(): Promise<void> {
     refreshObstacles(feet);exploration='walk';controller?.setEnabled(false);walker!.setEnabled(true);const eye={...feet,y:feet.y+1.68};walker!.teleport(eye,{x:feet.x-Math.sin(yaw)*8,y:eye.y,z:feet.z-Math.cos(yaw)*8});camera.fov=64;camera.updateProjectionMatrix();ui.setExploration(true,currentPlace);ui.setFlying(false);ui.setMouseMode('paused');savePose();
   }
   function exitHelicopter():boolean{
-    if(!ready||!helicopter||!walker)return false;const state=helicopter.viewState;if(!state.grounded||state.speed>.8){helicopter.releaseControls();ui.toast('需要先降落停稳才能下机：Shift 下降，或按 H 自动返航降落。');return false;}
+    if(!ready||!helicopter||!walker)return false;const state=helicopter.viewState;if(!state.grounded||state.speed>.8){helicopter.releaseControls();ui.toast(state.waterStatus?'海面不能停机或下机：Space 上升，G 安全脱困，或 H 自动返航。':'需要先降落停稳才能下机：Shift 下降，或按 H 自动返航降落。');return false;}
     const q=helicopter.snapshot().rotation,yaw=Math.atan2(2*(q.w*q.y+q.x*q.z),1-2*(q.y*q.y+q.z*q.z));const feet=helicopterExit(world,helicopter.position,yaw,p=>{refreshObstacles(p);return walker!.motor.canOccupy(p);});if(!feet){ui.toast('机舱两侧没有安全落脚点，请调整停机位置。');return false;}setPilot(false);putWalkerAt(feet,yaw);ui.toast('已关闭引擎，在机旁下机。靠近飞机按 E 可重新登机。');return true;
   }
   function returnToHelipad():void{

@@ -3,13 +3,14 @@ import type {VoxelWorld} from '../world/voxel';
 import {HELICOPTER_SPAWN} from '../route/coast-route';
 import {HELICOPTER_COLLISION_PARTS} from './helicopter-collision';
 import {WORLD_HEIGHT} from '../world/voxel';
+import {SEA_LEVEL} from '../world/sea-level';
 
 /** Side doors clear the cabin, skids and rotor column; never exit in midair. */
 export function helicopterExit(world:VoxelWorld,p:Vec3,yaw:number,canStand:(p:Vec3)=>boolean):Vec3|null{
  const floor=p.y-1.46;
  for(const side of [2.3,-2.3,3,-3])for(const offset of [0,.8,-.8]){
   const x=p.x+Math.cos(yaw)*side-Math.sin(yaw)*offset,z=p.z-Math.sin(yaw)*side-Math.cos(yaw)*offset;
-  for(let y=Math.floor(floor+.15);y>=Math.floor(floor-.8);y--){const feet={x,y:y+1,z};if(Math.abs(feet.y-floor)>.5||feet.y<=12||!world.getVoxel(Math.floor(x),y,Math.floor(z))||!canStand(feet))continue;return feet;}
+  for(let y=Math.floor(floor+.15);y>=Math.floor(floor-.8);y--){const feet={x,y:y+1,z};if(Math.abs(feet.y-floor)>.5||feet.y<SEA_LEVEL||!world.getVoxel(Math.floor(x),y,Math.floor(z))||!canStand(feet))continue;return feet;}
  }return null;
 }
 export function helipadClear(world:VoxelWorld,obstacles:readonly import('../input/scene-collisions').SceneObstacle[]):boolean{

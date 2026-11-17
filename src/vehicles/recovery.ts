@@ -2,8 +2,8 @@ import type {Vec3} from '../destruction/types';
 
 /** Explicit roadside/aircraft assistance only. A bounded search must never
  * turn ordinary contact into noclip, reset the world, or guess an unsafe pose. */
-export function findLocalRecovery<T>(origin:Vec3,heading:number,resolve:(candidate:Vec3)=>T|null,heights:readonly number[]=[0]):T|null{
-  for(const radius of [0,1,2,4,6,10]){
+export function findLocalRecovery<T>(origin:Vec3,heading:number,resolve:(candidate:Vec3)=>T|null,heights:readonly number[]=[0],radii:readonly number[]=[0,1,2,4,6,10]):T|null{
+  for(const radius of radii){
     for(let direction=0;direction<(radius?8:1);direction++){
       const angle=heading+direction*Math.PI/4;
       for(const dy of heights){

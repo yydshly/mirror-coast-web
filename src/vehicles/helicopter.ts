@@ -13,6 +13,7 @@ import {HELICOPTER_FORWARD_SPEED,HELICOPTER_REVERSE_SPEED,HELICOPTER_STRAFE_SPEE
 import {FlightSpace,ReturnDeparture,RETURN_LABELS,type ReturnPhase} from './return-flight';
 import {helipadClear} from './helicopter-access';
 import {findLocalRecovery,VehicleStallWatch} from './recovery';
+import {SEA_LEVEL} from '../world/sea-level';
 
 export type HelicopterInput = { pitch: number; strafe: number; yaw: number; lift: number };
 type Callbacks = { onNotice: (message: string) => void; canvas?: HTMLCanvasElement;canLand?:()=>boolean;flightObstacles?:()=>readonly SceneObstacle[] };
@@ -118,17 +119,18 @@ export class Helicopter {
   setObstacleProvider(provider: () => readonly SceneObstacle[]): void { this.obstacleProvider=provider; }
 
   get viewState(): HelicopterViewState {
-    const ground = this.groundHeight(this.location.x, this.location.z);
+    const terrain=this.terrainHeight(this.location.x,this.location.z),ground=Math.max(SEA_LEVEL,terrain);
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     const altitude = Math.max(0, this.location.y - ground - SKID_DROP);
     return {
       piloting: this.piloting, autopilot: this.autopilot, engineOn: this.engineOn,
-      rpm: this.rpm, speed, altitude, grounded: altitude < .32 && Math.abs(this.velocity.y) < .5,
+      rpm: this.rpm, speed, altitude, grounded: terrain>=SEA_LEVEL&&altitude < .32 && this.location.y>=ground+SKID_DROP-.25&&Math.abs(this.velocity.y) < .5,
       routeIndex: this.routeIndex, waypoint: this.flightMode==='return'?!this.autopilot&&!this.routeComplete?'手动驾驶 · 返航已暂停':RETURN_LABELS[this.returnPhase]:COAST_ROUTE[this.routeIndex]?.name ?? '返回停机坪', routeComplete: this.routeComplete,
       tourStatus:this.routeComplete?'complete':this.autopilot?'active':this.tourStarted?'paused':'idle',
       waypointDistance:this.location.distanceTo(this.flightMode==='return'?HELIPAD.position:COAST_ROUTE[this.routeIndex].position),
       flightMode:this.flightMode,...this.flightMode==='return'?{returnPhase:this.returnPhase,returnAltitude:this.departure?.altitude}:{},
       recoverySuggested:this.stall.stuck,
+      waterStatus:terrain<SEA_LEVEL&&this.location.y<SEA_LEVEL+3.8?(this.location.y<SEA_LEVEL+SKID_DROP?'submerged':'low'):null,
     };
   }
 
@@ -140,11 +142,14 @@ export class Helicopter {
     if(this.removed)return false;
     const origin=this.location.clone(),bounds=this.voxelWorld.bounds;
     const props=(this.callbacks.flightObstacles?.()??this.obstacleProvider()).filter(b=>
-      !this.ownObstacles.includes(b)&&b.maxX>origin.x-18&&b.minX<origin.x+18&&b.maxZ>origin.z-18&&b.minZ<origin.z+18&&b.maxY>origin.y-6&&b.minY<origin.y+14);
+      !this.ownObstacles.includes(b)&&b.maxX>origin.x-18&&b.minX<origin.x+18&&b.maxZ>origin.z-18&&b.minZ<origin.z+18&&b.maxY>origin.y-6&&b.minY<Math.max(origin.y+14,SEA_LEVEL+16));
     const space=new FlightSpace(this.voxelWorld,props,this.heading);
     const rotation=new Quaternion().setFromAxisAngle(new Vector3(0,1,0),this.heading);
     const point=findLocalRecovery(origin,this.heading,p=>{
-      if(p.y<14||p.y>146||p.x<bounds.minX-20||p.x>bounds.maxX+20||p.z<bounds.minZ-20||p.z>bounds.maxZ+20)return null;
+      // Old submerged saves need a checked destination above the water, not
+      // another relative offset which remains under the sea.
+      p.y=Math.max(p.y,SEA_LEVEL+4.3);
+      if(p.y>146||p.x<bounds.minX-20||p.x>bounds.maxX+20||p.z<bounds.minZ-20||p.z>bounds.maxZ+20)return null;
       return space.clear(p)&&this.vehicle.clearAt(p,rotation)?p:null;
     },[0,2,5,9,-2]);
     if(!point)return false;
@@ -422,9 +427,9 @@ export class Helicopter {
       } else this.desiredVelocity.y = clamp((this.hoverY - this.location.y) * 1.5, -3.5, 4);
     }
 
-    if (this.terrainHeight(this.location.x, this.location.z) < 11.8 && this.location.y < 15.8 && this.engineOn) {
-      this.desiredVelocity.y = Math.max(this.desiredVelocity.y, (16.3 - this.location.y) * 1.7);
-      this.hoverY = Math.max(this.hoverY, 16.3);
+    if (this.terrainHeight(this.location.x, this.location.z) < SEA_LEVEL && this.location.y < SEA_LEVEL+3.8 && this.engineOn) {
+      this.desiredVelocity.y = Math.max(this.desiredVelocity.y, (SEA_LEVEL+4.3 - this.location.y) * 1.7);
+      this.hoverY = Math.max(this.hoverY, SEA_LEVEL+4.3);
       if (this.flightTime - this.lastNotice > 4) {
         this.lastNotice = this.flightTime; this.callbacks.onNotice('海面高度过低，正在自动拉升');
       }
@@ -539,7 +544,7 @@ export class Helicopter {
   }
 
   private groundHeight(x: number, z: number): number {
-    return Math.max(12, this.terrainHeight(x, z));
+    return Math.max(SEA_LEVEL, this.terrainHeight(x, z));
   }
 
   private terrainHeight(x: number, z: number): number {

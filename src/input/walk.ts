@@ -4,6 +4,9 @@ import { VoxelWorld, WORLD_HEIGHT, type Vector3Like } from '../world/voxel';
 import { PointerLook, type MouseControlMode } from './pointer-look';
 import type { WalkingCamera, WalkingViewMode } from './walk-camera';
 import {GroundActions,type SeatTarget,type GroundInteraction} from './ground-actions';
+import {SEA_LEVEL,MAX_WADING_DEPTH} from '../world/sea-level';
+import {recoveryRoadPoints} from '../world/recovery-roads';
+import {Material} from '../world/palette';
 
 export const WALK_EYE_HEIGHT = 1.68;
 const BODY_HEIGHT = 1.8;
@@ -29,16 +32,18 @@ export class VoxelWalker {
   readonly velocity = new Vector3();
   grounded = false;
   recoveredLastStep = false;
+  recoveryReason:'water'|'collision'='collision';
   landingSpeed=0;
   private readonly safePosition = new Vector3();
   private jumpHeld = false;
   private supportMotion:{motion:SurfaceMotion;frame:number}|undefined;
   private obstacleProvider: () => readonly WalkObstacle[] = () => [];
+  private recoveryProbe:((position:Vector3Like)=>void)|undefined;
   private readonly postureBounds:SceneObstacle={minX:0,maxX:0,minY:0,maxY:0,minZ:0,maxZ:0};
   private readonly postureRotation=new Quaternion();
   private readonly postureVoxel=new Box3();
 
-  constructor(private readonly world: VoxelWorld, initialFeet: Vector3Like = { x: 108, y: 16, z: 171 }, private readonly seaLevel = 12) {
+  constructor(private readonly world: VoxelWorld, initialFeet: Vector3Like = { x: 108, y: 16, z: 171 }, private readonly seaLevel = SEA_LEVEL) {
     this.position.copy(initialFeet);
     this.safePosition.copy(initialFeet);
     this.teleportEye({ x: initialFeet.x, y: initialFeet.y + WALK_EYE_HEIGHT, z: initialFeet.z });
@@ -54,6 +59,9 @@ export class VoxelWalker {
     const top=this.supportBelow(this.position.x,this.position.z,this.position.y+MAX_STEP);
     if(top!==null&&top>this.position.y&&top-this.position.y<=MAX_STEP&&this.canOccupy({x:this.position.x,y:top,z:this.position.z})){this.position.y=top;this.safePosition.copy(this.position);}
   }
+  /** Refresh the live scenery list at a candidate, including distant fallback
+   * roads. Ordinary movement keeps its existing per-frame collision cache. */
+  setRecoveryProbe(probe:(position:Vector3Like)=>void):void{this.recoveryProbe=probe;}
 
   stop(): void { this.velocity.set(0, 0, 0); this.jumpHeld = false; }
   pauseInput(): void { this.velocity.x = 0; this.velocity.z = 0; this.jumpHeld = false; }
@@ -69,18 +77,34 @@ export class VoxelWalker {
     const z = Math.max(b.minZ + BODY_RADIUS, Math.min(b.maxZ - BODY_RADIUS, source.z));
     const maxFeet = Math.max(this.seaLevel + 6, Math.min(WORLD_HEIGHT + 1, source.y - WALK_EYE_HEIGHT + MAX_STEP));
     let found: Vector3 | null = null;
+    // A validated exit/seat position takes precedence over broad recovery.
+    // On a low beach, the recovery ceiling can include the aircraft's rotor;
+    // selecting that higher prop would lift a safe side-door exit into the air.
+    const requestedFeet=source.y-WALK_EYE_HEIGHT;
+    this.recoveryProbe?.({x,y:requestedFeet,z});
+    const requestedFloor=this.standingSurface(x,z,requestedFeet+MAX_STEP);
+    if(requestedFloor!==null&&requestedFloor>=requestedFeet-.65)found=new Vector3(x,requestedFloor,z);
     for (let radius = 0; radius <= 16 && !found; radius++) {
       for (let dz = -radius; dz <= radius && !found; dz++) for (let dx = -radius; dx <= radius; dx++) {
         if (radius && Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
         const px = Math.max(b.minX + BODY_RADIUS, Math.min(b.maxX - BODY_RADIUS, x + dx));
         const pz = Math.max(b.minZ + BODY_RADIUS, Math.min(b.maxZ - BODY_RADIUS, z + dz));
-        const floor = this.standingSurface(px, pz, maxFeet);
+        this.recoveryProbe?.({x:px,y:maxFeet,z:pz});const floor = this.standingSurface(px, pz, maxFeet);
         if (floor !== null) { found = new Vector3(px, floor, pz); break; }
       }
     }
+    if(!found){this.recoveryProbe?.(this.safePosition);if(this.safePosition.y>=this.seaLevel&&this.canOccupy(this.safePosition)&&this.hasSafeFooting(this.safePosition))found=this.safePosition.clone();}
+    // A destroyed last footing must not create an endless fall/recovery loop.
+    // This finite fallback reads actual roads, never a synthetic sea floor.
+    if(!found)for(const p of recoveryRoadPoints({x,z})){
+      this.recoveryProbe?.({...p,y:WORLD_HEIGHT});
+      const top=this.standingSurface(p.x,p.z,WORLD_HEIGHT);if(top===null)continue;
+      if(![Material.Road,Material.Stripe,Material.Concrete].includes(this.world.getVoxel(Math.floor(p.x),Math.round(top)-1,Math.floor(p.z)) as never))continue;
+      found=new Vector3(p.x,top,p.z);break;
+    }
     if (found) this.position.copy(found);
-    else if (this.canOccupy(this.safePosition)) this.position.copy(this.safePosition);
     else this.position.set(x, Math.max(this.seaLevel + 3, maxFeet), z);
+    this.recoveryProbe?.(this.position);
     this.stop();
     this.grounded = this.hasFloor();
     this.rememberSupportMotion();
@@ -129,6 +153,7 @@ export class VoxelWalker {
 
   update(dt: number, input: WalkInput): void {
     this.recoveredLastStep = false;
+    this.recoveryReason='collision';
     this.landingSpeed=0;
     if (!Number.isFinite(dt) || dt <= 0) return;
     // Standing on a heaving deck follows its accepted collision pose. Jumping
@@ -171,15 +196,15 @@ export class VoxelWalker {
       this.moveHorizontal('z', this.velocity.z * step);
       this.velocity.y = Math.max(-24, this.velocity.y - 19 * step);
       this.moveVertical(this.velocity.y * step);
-      if (this.position.y < this.seaLevel + .15) {
+      if (this.position.y < this.seaLevel - MAX_WADING_DEPTH) {
         // Swimming is outside this phase: recover to the last actual dry footing.
         // The old safe position may itself have been excavated. Revalidate it,
         // otherwise every frame drops back into the same freshly blasted hole.
         this.teleportEye({x:this.safePosition.x,y:Math.max(this.safePosition.y,this.seaLevel+1)+WALK_EYE_HEIGHT,z:this.safePosition.z});
-        this.grounded = this.hasFloor(); this.recoveredLastStep = true;
+        this.grounded = this.hasFloor(); this.recoveredLastStep = true;this.recoveryReason='water';
         break;
       }
-      if (this.grounded && this.position.y > this.seaLevel + .5) this.safePosition.copy(this.position);
+      if (this.grounded && this.position.y >= this.seaLevel) this.safePosition.copy(this.position);
     }
     this.rememberSupportMotion();
   }
@@ -272,6 +297,9 @@ export class VoxelWalker {
     const top = this.supportBelow(this.position.x, this.position.z, this.position.y + .025);
     return top !== null && this.position.y - top >= -.025 && this.position.y - top < .055;
   }
+  private hasSafeFooting(p:Vector3Like):boolean{
+    const top=this.supportBelow(p.x,p.z,p.y+.025);return top!==null&&top>=this.seaLevel&&Math.abs(p.y-top)<.055;
+  }
 
   private supportBelow(x: number, z: number, maxTop: number): number | null {
     const minX = Math.floor(x - BODY_RADIUS + EPSILON), maxX = Math.floor(x + BODY_RADIUS - EPSILON);
@@ -292,9 +320,9 @@ export class VoxelWalker {
     let highest: number | null = null;
     for (const obstacle of this.obstacleProvider()) {
       if(obstacle.standable===false)continue;
-      if (obstacle.maxY > this.seaLevel && overlapsFootprint(x,z,obstacle)) {const top=obstacleTopAt(obstacle,x,z,BODY_RADIUS,maxFeet);if(top!==null&&top>this.seaLevel&&this.canOccupy({x,y:top,z}))highest=Math.max(highest??-Infinity,top);}
+      if (obstacle.maxY >= this.seaLevel && overlapsFootprint(x,z,obstacle)) {const top=obstacleTopAt(obstacle,x,z,BODY_RADIUS,maxFeet);if(top!==null&&top>=this.seaLevel&&this.canOccupy({x,y:top,z}))highest=Math.max(highest??-Infinity,top);}
     }
-    for (let y = Math.min(WORLD_HEIGHT - 1, Math.floor(maxFeet - 1)); y >= Math.floor(this.seaLevel); y--) {
+    for (let y = Math.min(WORLD_HEIGHT - 1, Math.floor(maxFeet - 1)); y >= Math.ceil(this.seaLevel)-1; y--) {
       if (!this.world.getVoxel(Math.floor(x), y, Math.floor(z))) continue;
       const feet = y + 1;
       if (this.canOccupy({ x, y: feet, z })) return Math.max(highest ?? -Infinity, feet);
@@ -306,7 +334,7 @@ export class VoxelWalker {
 type WalkCallbacks = {
   onActiveChange: (active: boolean) => void;
   onFallback: () => void;
-  onRecover?: () => void;
+  onRecover?: (reason:'water'|'collision') => void;
   onAction?: () => void;
   onTool?: (index: number) => void;
   onHelp?: () => void;
@@ -447,7 +475,7 @@ export class WalkingController {
       // support underfoot is destroyed, and must finish an in-progress landing.
       this.motor.update(delta, { x: 0, z: 0 });
       this.actions.landed(this.motor.landingSpeed);
-      if (this.motor.recoveredLastStep) this.callbacks.onRecover?.();
+      if (this.motor.recoveredLastStep) this.callbacks.onRecover?.(this.motor.recoveryReason);
       this.renderView(delta); return;
     }
     if (this.keys.has('ArrowLeft')) this.targetRotation.y += delta * 1.15;
@@ -466,7 +494,7 @@ export class WalkingController {
       run: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'), jump: this.keys.has('Space'),
     });
     this.actions.landed(this.motor.landingSpeed);
-    if (this.motor.recoveredLastStep) this.callbacks.onRecover?.();
+    if (this.motor.recoveredLastStep) this.callbacks.onRecover?.(this.motor.recoveryReason);
     this.renderView(delta);
     if (this.primaryHeld) {
       this.repeat -= delta;

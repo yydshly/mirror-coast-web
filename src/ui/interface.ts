@@ -685,6 +685,10 @@ export class Interface {
       this.require('[data-vehicle-status]').textContent='持续受阻 · 可安全脱困';
       this.require('[data-vehicle-note]').textContent='普通碰撞仍然生效；按 G 或点击「脱困」，检查附近安全空域后解除卡住。';
     }
+    if(state.waterStatus){
+      this.require('[data-vehicle-status]').textContent=state.waterStatus==='submerged'?'机体涉水 · 可按 G 脱困':state.engineOn?'海面过低 · 正在保护拉升':'海面不能停机 · 请上升或按 G';
+      this.require('[data-vehicle-note]').textContent='海面不能停机或下机。Space 上升，G 脱困至安全空域，H 自动返航降落。';
+    }
     if (state.piloting && !wasPiloting && this.isHelpOpen) this.toggleHelp();
     this.updateHelp();
     this.updateFlightHint();
@@ -848,16 +852,16 @@ export class Interface {
     if (mode === this.lastHelpMode) return;
     this.lastHelpMode = mode;
     const controls = this.require('.mc-controls');
-    if(mode==='bicycle'){this.require('#mc-help-title').textContent='沿海慢骑，也可以停下来。';this.require('.mc-help p').textContent='W 蹬车，S 制动后可以低速退行挪车，Space 刹车。转弯随车速变化，接近高台阶、断边或水面会停住；F / E 安全下车后继续步行。卡在障碍旁可按 G，移到附近安全地面。鼠标拖动只环视，不改变车头方向。';}
+    if(mode==='bicycle'){this.require('#mc-help-title').textContent='沿海慢骑，也可以停下来。';this.require('.mc-help p').textContent='W 蹬车，S 制动后退行，Space 刹车。平坦水线沙地可以骑行；前方深水会停住，按 S 退回岸边，G 挪到安全岸地或道路。F / E 停稳下车后继续步行。鼠标拖动只环视，不改变车头方向。';}
     else if (mode === 'drive') {
       this.require('#mc-help-title').textContent = '沿着公路，开向海岸。';
       this.require('.mc-help p').textContent = '旧城、工业港、山麓社区与海岬由真实道路相连。按 M 查看导航；停车下车后可以继续步行探索。深水无法行驶，请倒车回岸；已入水、卡住或侧翻时按 G，将汽车扶正到道路或岸上。';
     } else if (mode === 'walk') {
       this.require('#mc-help-title').textContent = '沿着街灯，慢慢走。';
-      this.require('.mc-help p').textContent = '靠近长椅、面向座位按 E 坐下；坐着时拖动鼠标看风景，E / Space 起身，WASD 起身后行走。面向有安全落点的低栏按 E 翻越；Space 是普通跳跃。Esc 释放操作，C 切换视角。';
+      this.require('.mc-help p').textContent = '靠近长椅、面向座位按 E 坐下；E / Space 起身，WASD 起身后行走。面向有安全落点的低栏按 E 翻越；Space 跳跃。水线沙地可以行走；进入深水会返回岸上落脚点，可改走栈桥。Esc 释放操作，C 切换视角。';
     } else if (mode === 'pilot') {
       this.require('#mc-help-title').textContent = '沿着海岸，飞一圈。';
-      this.require('.mc-help p').textContent = '手动起飞按 Space，旋翼启动时需短暂等待。手动巡航更快，自动游览会为观景与返航减速。左红右绿航行灯、尾灯和防撞灯随引擎开启，低空使用着陆灯。拖动环视、滚轮缩放，R 回正；打开地图或手记不打断自动游览。卡在楼檐或障碍旁可按 G 脱困并悬停，H 则自动飞回停机坪。';
+      this.require('.mc-help p').textContent = 'Space 起飞，旋翼启动时需短暂等待。拖动环视、滚轮缩放，R 回正；打开地图或手记不打断自动游览。海面不能停机或下机，过低会保护拉升。卡在障碍旁或旧位置涉水时按 G，到安全空域悬停；H 自动飞回停机坪，落地停稳后 F 下机。航行灯随引擎开启，低空使用着陆灯。';
     } else {
       this.require('#mc-help-title').textContent = this.vehicleAvailable ? '从码头，出发。' : '从海岸，出发。';
       this.require('.mc-help p').textContent = '自由镜头悬浮观察，WASD 水平移动，Space / E 上升、Q 下降；地面和建筑会挡住镜头。地面探索请选择顶部「步行」。鼠标锁定时直接移动转向，未锁定时左拖或右拖转向；挖除、爆破用左键点按或长按。';

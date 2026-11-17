@@ -3,6 +3,7 @@ import type {Vector3Like} from '../world/voxel';
 import type {SceneObstacle} from './scene-collisions';
 import type {VoxelWalker} from './walk';
 import {nearbyRailFrames,voxelRailsNear} from './vault-rails';
+import {SEA_LEVEL} from '../world/sea-level';
 
 export type SeatTarget={id:string;position:Vector3Like;floorY:number;yaw:number;kind?:'bench'|'chair';halfWidth?:number;halfDepth?:number;available:()=>boolean};
 export type GroundMotion={sit:number;seatHeight:number;bodyYaw?:number;vault?:number;handForward?:number;handHeight?:number;landing:number;verticalSpeed:number;gazeYaw?:number;gazePitch?:number};
@@ -229,7 +230,7 @@ export class GroundActions {
    if(frame.top-start.y>1.5){this.proximityHint='这段栏杆超过可翻高度，请走台阶或缺口。';continue;}if(frame.top-start.y<.45)continue;
    const landingAlong=clamp(along,frame.low+.30,frame.high-.30),end=new Vector3(n.x*(frame.plane+sign*(half+.70))+t.x*landingAlong,start.y,n.z*(frame.plane+sign*(half+.70))+t.z*landingAlong);
    this.proximityHint='此处落点或通道不安全，沿栏杆换个位置。';
-   const floor=this.motor.surfaceAt(end.x,end.z,start.y+1.05,2.1);if(floor===null||floor<=12.2||Math.abs(start.y-floor)>1.05){this.proximityHint='栏杆另一侧是水面或落差过大，无法安全落脚。';continue;}end.y=floor;if(!this.motor.canOccupy(end))continue;
+   const floor=this.motor.surfaceAt(end.x,end.z,start.y+1.05,2.1);if(floor===null||floor<SEA_LEVEL||Math.abs(start.y-floor)>1.05){this.proximityHint='栏杆另一侧是水面或落差过大，无法安全落脚。';continue;}end.y=floor;if(!this.motor.canOccupy(end))continue;
    if(frame.top-Math.min(start.y,floor)>1.5){this.proximityHint='两侧高差过大，无法安全往返，请走台阶或缺口。';continue;}
    let supported=true;for(const dx of [-.19,.19])for(const dz of [-.19,.19]){const y=this.motor.surfaceAt(end.x+dx,end.z+dz,floor+.08,.3);if(y===null||Math.abs(y-floor)>.15)supported=false;}if(!supported)continue;
    const launch=new Vector3(n.x*(frame.plane-sign*(half+.56))+t.x*landingAlong,start.y,n.z*(frame.plane-sign*(half+.56))+t.z*landingAlong);
