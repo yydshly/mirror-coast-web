@@ -526,6 +526,7 @@ async function boot(): Promise<void> {
   ui.setWalkView(walker.viewMode);
   if(dressed&&!isYard){bicycle=new Bicycle(scene,world,canvas,()=>!ui.isHelpOpen&&!ui.isMenuOpen&&!fieldbook?.isOpen&&!signalConsole?.isOpen);bicycle.setObstacleProvider(()=>[...nearbyScene(bicycle!.position,16,8,true,false),...walkTransitions?.nearby(bicycle!.position)??[]]);bicycle.setRecoveryObstacleProvider(p=>[...nearbyScene(p,24,Infinity,true,false),...walkTransitions?.nearby(p)??[]]);if(restoredBicycle)bicycle.restore(restoredBicycle);ui.setBicycleState(bicycle.viewState);}
   if(dressed){boat=new CoastalBoat(scene,world,canvas,()=>!ui.isHelpOpen&&!ui.isModalOpen&&!ui.isMenuOpen&&!fieldbook?.isOpen,(x,z)=>environment!.waterHeightAt(x,z));boat.setObstacleProvider(p=>nearbyScene(p,20,Infinity,true,true,false));if(restoredBoat)boat.restore(restoredBoat);ui.setBoatState(boat.viewState);}
+  coastalLife?.setObstacleProvider(p=>nearbyScene(p,14,8));
 
   if(isYard){
     root.classList.add('is-response-yard');
@@ -792,6 +793,7 @@ async function boot(): Promise<void> {
       if(neighborhood)canvas.dataset.neighborhood=JSON.stringify(neighborhood.diagnostics);
       if(walkTransitions)canvas.dataset.walkTransitions=JSON.stringify(walkTransitions.diagnostics);
       if(coastalLife)canvas.dataset.coastalLife=JSON.stringify(coastalLife.diagnostics);
+      if(coastalLife)canvas.dataset.coastalVessels=JSON.stringify(coastalLife.vesselStates);
       if(coastalArt)canvas.dataset.harborBoats=JSON.stringify(coastalArt.boatDiagnostics);
       const message = pendingSpawn ? '正在更新破坏后的碰撞' : physics!.activeCount ? `${physics!.activeCount} 组碎块正在下落` :
         structureQueue.pending ? '正在检查建筑支撑' : physics!.settledCount ? `${physics!.settledCount} 块废墟已落定 · 自动保存` : isLab ? '准备就绪 · 可试射支柱' : '建筑支撑检查已启用';
@@ -918,7 +920,7 @@ async function boot(): Promise<void> {
 
   // One scene list feeds feet, road rescue, cars and helicopter cameras/bodies.
   // Cars receive the graded road triangles separately from the scenery index.
-  function sceneObstacleGroups():readonly (readonly SceneObstacle[])[]{return [boatLandings?.obstacles??[],boat?.obstacles??[],journeyArt?.obstacles??[],harborPassageArt?.obstacles??[],coastalArt?.obstacles??[],streetArt?.obstacles??[],regionArt?.obstacles??[],southBay?.obstacles??[],outerCoast?.obstacles??[],neighborhood?.obstacles??[],entrances?.obstacles??[],routeLandscape?.obstacles??[],bicycle?.obstacles??[],explorationArt?.obstacles??[],streetLife?.obstacles??[],streetLife?.pedestrianObstacles??[],streetLife?.signalObstacles??[],decorPhysics.obstacles];}
+  function sceneObstacleGroups():readonly (readonly SceneObstacle[])[]{return [coastalLife?.obstacles??[],boatLandings?.obstacles??[],boat?.obstacles??[],journeyArt?.obstacles??[],harborPassageArt?.obstacles??[],coastalArt?.obstacles??[],streetArt?.obstacles??[],regionArt?.obstacles??[],southBay?.obstacles??[],outerCoast?.obstacles??[],neighborhood?.obstacles??[],entrances?.obstacles??[],routeLandscape?.obstacles??[],bicycle?.obstacles??[],explorationArt?.obstacles??[],streetLife?.obstacles??[],streetLife?.pedestrianObstacles??[],streetLife?.signalObstacles??[],decorPhysics.obstacles];}
   function ensureSceneIndex():void{
     if(indexedObstacleRevision===trafficObstacleRevision)return;
     const fixed=[boatLandings?.obstacles??[],journeyArt?.obstacles??[],harborPassageArt?.obstacles??[],coastalArt?.obstacles??[],streetArt?.obstacles??[],regionArt?.obstacles??[],southBay?.obstacles??[],outerCoast?.obstacles??[],neighborhood?.obstacles??[],entrances?.obstacles??[],routeLandscape?.obstacles??[],explorationArt?.obstacles??[],streetLife?.signalObstacles??[]];
@@ -928,7 +930,7 @@ async function boot(): Promise<void> {
   }
   function nearbyScene(center:Vec3,radius=16,verticalRadius=Infinity,withPhysics=true,withBicycle=true,withBoat=true):SceneObstacle[]{
     ensureSceneIndex();
-    return sceneCollisions.query(center,radius,verticalRadius,[streetLife?.obstacles??[],streetLife?.pedestrianObstacles??[],decorPhysics.obstacles,...withBoat?[boat?.obstacles??[]]:[],...withBicycle?[bicycle?.obstacles??[]]:[],...withPhysics?[physics?.walkObstacles??[]]:[]]);
+    return sceneCollisions.query(center,radius,verticalRadius,[coastalLife?.obstacles??[],streetLife?.obstacles??[],streetLife?.pedestrianObstacles??[],decorPhysics.obstacles,...withBoat?[boat?.obstacles??[]]:[],...withBicycle?[bicycle?.obstacles??[]]:[],...withPhysics?[physics?.walkObstacles??[]]:[]]);
   }
   function refreshObstacles(center: Vec3): void {
     nearbyObstacles = nearbyScene(center,16,8);

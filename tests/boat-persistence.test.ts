@@ -13,3 +13,6 @@ it('rejects an invalid boat import without replacing the current world and journ
 it('continues accepting existing saves which have no boat field',async()=>{
  const p=create(),player=pose();delete player.boat;p.setPlayer(player,17.2);await p.flush();const save=await p.exportSave(),copy=create();await copy.importSave(save);expect((await copy.load())?.player).toEqual(player);
 });
+it('round trips a grounded vessel without losing its beaching state',async()=>{
+ const p=create(),player=pose();player.boat!.grounded=true;player.boat!.position.y=12.47;p.setPlayer(player,17.2);await p.flush();const copy=create();await copy.importSave(await p.exportSave());expect((await copy.load())?.player?.boat).toEqual(player.boat);
+});
