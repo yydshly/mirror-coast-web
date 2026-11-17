@@ -10,7 +10,7 @@
 
 ![GitHub Pages 上线版本：码头与旧城](docs/demo/online-overview.jpg)
 
-2026-11-17 已上线。载具脱困及刷新恢复已实测；斜向车辆旁的空隙现在使用随车身旋转的碰撞，骑行与镜头避让已做实机对照，G 脱困已加入各载具的操作提示。[斜车旁通行实测](docs/TRAFFIC-CONTACT.md) · [脱困说明](docs/RECOVERY.md) · [首次发布验证记录](docs/DEPLOYMENT.md#本次发布验证)
+2026-11-17 已上线。载具脱困及刷新恢复已实测；斜向车辆旁的通行继续扩展复核到停放事故车、直升机附件更新及骑手头部净高，G 脱困已加入各载具的操作提示。[载具范围复核](docs/VEHICLE-RANGE-AUDIT.md) · [斜车旁通行实测](docs/TRAFFIC-CONTACT.md) · [脱困说明](docs/RECOVERY.md) · [首次发布验证记录](docs/DEPLOYMENT.md#本次发布验证)
 
 ## 演示
 

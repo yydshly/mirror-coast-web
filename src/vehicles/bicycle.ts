@@ -6,6 +6,7 @@ import {VehicleOrbit} from '../input/vehicle-orbit';
 import {clipVehicleCamera} from './chase-camera';
 import {bicycleModel} from './bicycle-model';
 import {BICYCLE_RIG as R} from './bicycle-rig';
+import {bicycleRiderBounds} from './bicycle-collision';
 import{bicycleWallCorrection}from'./bicycle-wall-contact';
 import type {Vec3} from '../destruction/types';
 import {findLocalRecovery,VehicleStallWatch} from './recovery';
@@ -29,7 +30,10 @@ export class Bicycle{
   private listeners:Array<()=>void>=[];private ready=false;private look=new Vector3();
   private q=new Quaternion();private query:SceneObstacle={minX:0,maxX:0,minY:0,maxY:0,minZ:0,maxZ:0};
   private previousQuery:SceneObstacle={minX:0,maxX:0,minY:0,maxY:0,minZ:0,maxZ:0};
-  readonly obstacles:SceneObstacle[]=[{minX:0,maxX:0,minY:0,maxY:0,minZ:0,maxZ:0,standable:false,vaultable:false,bicycle:true}];
+  private headQuery:SceneObstacle={minX:0,maxX:0,minY:0,maxY:0,minZ:0,maxZ:0};
+  private previousHead:SceneObstacle={minX:0,maxX:0,minY:0,maxY:0,minZ:0,maxZ:0};
+  private partCenter=new Vector3();
+  readonly obstacles:SceneObstacle[]=Array.from({length:2},()=>({minX:0,maxX:0,minY:0,maxY:0,minZ:0,maxZ:0,standable:false,vaultable:false,bicycle:true}));
 
   constructor(scene:Scene,private world:VoxelWorld,canvas?:HTMLCanvasElement,private canControl:()=>boolean=()=>true){
     this.motor=new VoxelWalker(world,BICYCLE_SPAWN);scene.add(this.model.root);this.orbit=new VehicleOrbit(canvas);
@@ -145,15 +149,18 @@ export class Bicycle{
     let clear=true;const initialSupport=this.wheelSupport(next,heading),oldPitch=this.wheelSupport(this.position,this.heading)?.pitch??0;
     const groundCenter=initialSupport?.y??next.y,grade=Math.tan(initialSupport?.pitch??oldPitch),supportCeiling=Math.max(next.y,groundCenter)+.23;
     orientedCollisionBounds({x:this.position.x,y:this.position.y+.96,z:this.position.z},this.q.setFromEuler(new Euler(oldPitch,this.heading,0,'YXZ')),{x:.31,y:.77,z:.96},this.previousQuery);
+    this.riderBounds(this.position,this.q,this.previousHead);
     this.q.setFromAxisAngle(new Vector3(0,1,0),heading);
     this.q.setFromEuler(new Euler(Math.atan(grade),heading,0,'YXZ'));
     orientedCollisionBounds({x:next.x,y:groundCenter+.96,z:next.z},this.q,{x:.31,y:.77,z:.96},this.query);
+    this.riderBounds({x:next.x,y:groundCenter,z:next.z},this.q,this.headQuery);
     const slide=(b:SceneObstacle)=>{
       if(Math.abs(this.speed)<.0001)return false;
       const correction=bicycleWallCorrection(this.previousQuery,this.query,b,{x:next.x-this.position.x,z:next.z-this.position.z});
       if(!correction)return false;
       next.x+=correction.x;next.z+=correction.z;contactOffset.x+=correction.x;contactOffset.z+=correction.z;
-      orientedCollisionBounds({x:next.x,y:groundCenter+.96,z:next.z},this.q,{x:.31,y:.77,z:.96},this.query);return !obstaclesIntersect(this.query,b);
+      orientedCollisionBounds({x:next.x,y:groundCenter+.96,z:next.z},this.q,{x:.31,y:.77,z:.96},this.query);
+      this.riderBounds({x:next.x,y:groundCenter,z:next.z},this.q,this.headQuery);return !obstaclesIntersect(this.query,b);
     };
     // Continuous road caps are checked by both wheel probes and the character
     // motor; their enclosing box must not become an invisible vertical wall.
@@ -167,6 +174,15 @@ export class Bicycle{
     for(let y=Math.floor(this.query.minY);y<=Math.floor(this.query.maxY);y++)for(let z=Math.floor(this.query.minZ);z<=Math.floor(this.query.maxZ);z++)for(let x=Math.floor(this.query.minX);x<=Math.floor(this.query.maxX);x++)if(this.world.getVoxel(x,y,z)){
       Object.assign(voxel,{minX:x,maxX:x+1,minY:y,maxY:y+1,minZ:z,maxZ:z+1});
       if(obstaclesIntersect(this.query,voxel)&&!slide(voxel)){clear=false;this.blocked='前方受阻 · S 退行或向外转向 / F 下车';}
+    }
+    for(const b of this.nearby){
+      if(b.surface||!obstaclesIntersect(this.headQuery,b))continue;
+      if(b.pedestrianId!==undefined&&(obstaclesIntersect(this.previousQuery,b)||obstaclesIntersect(this.previousHead,b))&&contactSeparates(this.previousQuery,this.query,b))continue;
+      clear=false;this.blocked='头顶空间不足 · S 退行或 F 下车';break;
+    }
+    for(let y=Math.floor(this.headQuery.minY);y<=Math.floor(this.headQuery.maxY);y++)for(let z=Math.floor(this.headQuery.minZ);z<=Math.floor(this.headQuery.maxZ);z++)for(let x=Math.floor(this.headQuery.minX);x<=Math.floor(this.headQuery.maxX);x++)if(this.world.getVoxel(x,y,z)){
+      Object.assign(voxel,{minX:x,maxX:x+1,minY:y,maxY:y+1,minZ:z,maxZ:z+1});
+      if(obstaclesIntersect(this.headQuery,voxel)){clear=false;this.blocked='头顶空间不足 · S 退行或 F 下车';}
     }
     // Compare the old wheels in their actual old heading. A trial steering
     // angle must not mistake the adjacent wall for yesterday's wheel support.
@@ -191,8 +207,11 @@ export class Bicycle{
     // The walking motor has a short center footprint. It may accept a step
     // that the complete wheelbase cannot occupy, especially when reversing.
     const actualSupport=this.wheelSupport(this.position,this.heading);
-    if(actualSupport&&contactOffset.lengthSq())orientedCollisionBounds({x:this.position.x,y:actualSupport.y+.96,z:this.position.z},this.q.setFromEuler(new Euler(actualSupport.pitch,this.heading,0,'YXZ')),{x:.31,y:.77,z:.96},this.query);
-    const meetsWall=actualSupport&&contactOffset.lengthSq()>0&&this.nearby.some(b=>b.pedestrianId===undefined&&!b.surface&&!(b.standable===true&&b.maxY<=supportCeiling)&&obstaclesIntersect(this.query,b));
+    if(actualSupport&&contactOffset.lengthSq()){
+      orientedCollisionBounds({x:this.position.x,y:actualSupport.y+.96,z:this.position.z},this.q.setFromEuler(new Euler(actualSupport.pitch,this.heading,0,'YXZ')),{x:.31,y:.77,z:.96},this.query);
+      this.riderBounds({x:this.position.x,y:actualSupport.y,z:this.position.z},this.q,this.headQuery);
+    }
+    const meetsWall=actualSupport&&contactOffset.lengthSq()>0&&this.nearby.some(b=>b.pedestrianId===undefined&&!b.surface&&!(b.standable===true&&b.maxY<=supportCeiling)&&(obstaclesIntersect(this.query,b)||obstaclesIntersect(this.headQuery,b)));
     if(!actualSupport||meetsWall){
       this.position.copy(before);this.heading=previousHeading;this.motor.stop();this.speed=0;this.pedaling=false;this.blocked='轮组支撑不足 · S 退行 / F 下车';this.settleLegs(dt,true,0);return;
     }
@@ -246,8 +265,14 @@ export class Bicycle{
       pitch,riding:this.riding,footDown:this.footDown,
       backingPhase:this.backingDistance/.4*Math.PI*2,groundAt:(x,z)=>this.floorAt(x,z)});
     const parkedOffset=this.riding?0:-.04;
-    orientedCollisionBounds({x:this.position.x+Math.cos(this.heading)*parkedOffset,y:this.position.y+(this.riding?.95:.66),z:this.position.z-Math.sin(this.heading)*parkedOffset},
-      this.q.setFromAxisAngle(new Vector3(0,1,0),this.heading),{x:this.riding?.34:.40,y:this.riding?.93:.64,z:1.02},this.obstacles[0]);
+    this.q.setFromEuler(new Euler(pitch,this.heading,0,'YXZ'));
+    orientedCollisionBounds(this.partCenter.set(parkedOffset,this.riding?.95:.66,0).applyQuaternion(this.q).add(this.position),
+      this.q,{x:this.riding?.34:.40,y:this.riding?.93:.64,z:1.02},this.obstacles[0]);
+    if(this.riding)this.riderBounds(this.position,this.q,this.obstacles[1]);
+    else{this.obstacles[1].minY=0;this.obstacles[1].maxY=-1;}
+  }
+  private riderBounds(position:Vec3,rotation:Quaternion,target:SceneObstacle):void{
+    bicycleRiderBounds(position,rotation,this.steer,this.speed,target);
   }
   private camera(dt:number,c:PerspectiveCamera){
     const o=this.orbit.state,a=this.heading+o.yaw,e=.28+o.pitch,r=5.8*o.distanceScale;

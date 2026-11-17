@@ -207,7 +207,7 @@ export class CollapsePhysics {
         for(const b of obstacles){
           if(b.physicsManaged||b.trafficId!==undefined||b.maxY<=b.minY||b.maxX<=b.minX||b.maxZ<=b.minZ||b.maxX<at.x-reach||b.minX>at.x+reach||b.maxZ<at.z-reach||b.minZ>at.z+reach||b.maxY<at.y-7-extraReach||b.minY>at.y+7+extraReach)continue;
           retained.add(b);
-          const signature=[b.minX,b.maxX,b.minY,b.maxY,b.minZ,b.maxZ,...b.obb?.rotation.elements??[]].join(',');
+          const signature=[b.minX,b.maxX,b.minY,b.maxY,b.minZ,b.maxZ,...b.obb?.rotation.elements??[],...b.obb?[b.obb.center.x,b.obb.center.y,b.obb.center.z,b.obb.halfSize.x,b.obb.halfSize.y,b.obb.halfSize.z]:[]].join(',');
           const existing=props.get(b);if(existing?.signature===signature)continue;
           if(existing)this.world.removeCollider(existing.collider,false);
           const center=b.hull?{x:(b.minX+b.maxX)/2,y:(b.minY+b.maxY)/2,z:(b.minZ+b.maxZ)/2}:b.obb?.center??{x:(b.minX+b.maxX)/2,y:(b.minY+b.maxY)/2,z:(b.minZ+b.maxZ)/2};

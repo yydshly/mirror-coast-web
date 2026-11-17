@@ -97,7 +97,7 @@ export class StreetArt {
     for(const car of this.physicalParked){if(this.clearedTraffic.has(car.id))continue;const state=states.find(s=>s.id===car.id);if(!state)continue;car.active=true;
       const transform=new Matrix4().compose(new Vector3().copy(state.position),new Quaternion().copy(state.rotation),new Vector3(1,1,1)).multiply(new Matrix4().makeTranslation(-car.origin.x,-car.origin.y,-car.origin.z));
       for(const p of car.parts){p.detail.physical=true;if(p.batch.mesh){p.batch.mesh.setMatrixAt(p.index,p.batch.material===this.contactMaterial?this.zero:new Matrix4().multiplyMatrices(transform,p.detail.transform));p.batch.mesh.instanceMatrix.needsUpdate=true;}}
-      orientedBoxBounds(state.position,state.rotation,car.half,car.bounds);
+      orientedCollisionBounds(state.position,state.rotation,car.half,car.bounds);
     }
   }
   clearTraffic(ids:ReadonlySet<number>):number[]{
@@ -669,7 +669,10 @@ export class StreetArt {
     if(!footing)return;const anchor=footing.anchors,baseY=footing.y,material=surfaceFinish(this.material(paint,.34,.22),'paint');this.propFootings.push({kind:'car',...footing});
     const halfX = Math.abs(Math.cos(yaw)) * .99 + Math.abs(Math.sin(yaw)) * 2.16;
     const halfZ = Math.abs(Math.sin(yaw)) * .99 + Math.abs(Math.cos(yaw)) * 2.16;
-    const bounds={ minX: x - halfX, minY: baseY, minZ: z - halfZ, maxX: x + halfX, maxY: baseY+1.35, maxZ: z + halfZ,trafficId:id,trafficKind:'sedan' as const };
+    // Saved parked-car rotations are relative to this original world-axis frame.
+    // Keep that frame, while sharing its exact dimensions with Rapier.
+    const half={x:halfX,y:.675,z:halfZ};
+    const bounds={...orientedCollisionBounds({x,y:baseY+.675,z},{x:0,y:0,z:0,w:1},half),trafficId:id,trafficKind:'sedan' as const,trafficHalfSize:half};
     this.parkedCars.push({ anchors: anchor, bounds });
     const part = (u: number, y: number, w: number, sx: number, sy: number, sz: number, mat: MeshStandardMaterial,geometry=this.unitBox as BufferGeometry,pitch=0) => this.box(new Vector3(u, y, w).applyAxisAngle(new Vector3(0, 1, 0), yaw).add(new Vector3(x, baseY, z)), new Vector3(sx, sy, sz), mat, anchor, yaw,geometry,pitch);
     part(0,.012,0,2.05,1,3.9,this.contactMaterial,this.contactPlane);
