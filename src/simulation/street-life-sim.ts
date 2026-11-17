@@ -4,7 +4,7 @@ import { regionalHeightAt } from '../world/region-terrain';
 import type { Vector3Like, VoxelWorld } from '../world/voxel';
 import type {TrafficBodyState} from '../destruction/physics';
 import {Quaternion,Vector3} from 'three';
-import {orientedBoxBounds,contactSeparates} from '../input/scene-collisions';
+import {orientedCollisionBounds,contactSeparates} from '../input/scene-collisions';
 import {bypassPose,planTrafficBypass,trafficBounds,trafficBoundsOverlap,type TrafficBypass} from './traffic-bypass';
 import {JunctionFlow} from './junction-flow';
 
@@ -42,9 +42,12 @@ export function sampleRoute(route:RoadRoute,distance:number):{x:number;z:number;
   for(let i=0;i<route.points.length;i++){const len=route.lengths[i];if(d<=len){const a=route.points[i],b=route.points[(i+1)%route.points.length],t=len?d/len:0;return {x:a.x+(b.x-a.x)*t,z:a.z+(b.z-a.z)*t,heading:Math.atan2(a.x-b.x,a.z-b.z)};}d-=len;}
   return {...route.points[0],heading:0};
 }
+const boundsRotation=new Quaternion();
 function boundsAt(position:Vector3Like,heading:number,width:number,length:number,height:number,target:SceneObstacle):void{
-  const c=Math.abs(Math.cos(heading)),s=Math.abs(Math.sin(heading)),hx=c*width/2+s*length/2,hz=s*width/2+c*length/2;
-  Object.assign(target,{minX:position.x-hx,maxX:position.x+hx,minY:position.y,maxY:position.y+height,minZ:position.z-hz,maxZ:position.z+hz});
+  // Keep the broad box for spatial queries, with the actual rotated body for
+  // narrow contact. Empty corners beside turning cars must remain traversable.
+  boundsRotation.set(0,Math.sin(heading/2),0,Math.cos(heading/2));
+  orientedCollisionBounds({x:position.x,y:position.y+height/2,z:position.z},boundsRotation,{x:width/2,y:height/2,z:length/2},target);
 }
 const emptyBounds=():SceneObstacle=>({minX:0,maxX:0,minY:0,maxY:0,minZ:0,maxZ:0});
 const overlap=(a:SceneObstacle,b:SceneObstacle,margin=0)=>a.minX<b.maxX+margin&&a.maxX>b.minX-margin&&a.minY<b.maxY&&a.maxY>b.minY&&a.minZ<b.maxZ+margin&&a.maxZ>b.minZ-margin;
@@ -168,7 +171,7 @@ export class StreetLifeSimulation{
       const state=context.trafficPhysics?.find(s=>s.id===car.id);if(!state)continue;
       const q=new Quaternion().copy(state.rotation),p=new Vector3(0,-car.height/2,0).applyQuaternion(q).add(state.position),f=new Vector3(0,0,-1).applyQuaternion(q);
       Object.assign(car.position,p);car.physicsRotation=state.rotation;car.bypass=undefined;car.visible=true;car.speed=Math.hypot(state.linearVelocity.x,state.linearVelocity.z);car.heading=Math.atan2(-f.x,-f.z);car.braking=true;
-      orientedBoxBounds(state.position,state.rotation,{x:Math.max(car.width/2,car.width*.48+.11),y:car.height/2,z:car.length/2},car.bounds);
+      orientedCollisionBounds(state.position,state.rotation,{x:Math.max(car.width/2,car.width*.48+.11),y:car.height/2,z:car.length/2},car.bounds);
     }
     this.accumulator+=clamp(dt,0,.1);
     this.dynamicObstacles=context.dynamicObstacles??[];

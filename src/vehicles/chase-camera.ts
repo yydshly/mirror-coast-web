@@ -1,9 +1,10 @@
-import { Vector3 } from 'three';
+import { Ray,Vector3 } from 'three';
 import type { Vector3Like, VoxelWorld } from '../world/voxel';
 import type { SceneObstacle } from '../input/scene-collisions';
 
 const direction = new Vector3(), right = new Vector3(), up = new Vector3();
 const originOffset = new Vector3();
+const propRay=new Ray(),propHit=new Vector3();
 
 /** Volume rays protect the camera/near plane even before a terrain collider uploads. */
 export function clipVehicleCamera(world: VoxelWorld, origin: Vector3Like, destination: Vector3Like, queryPhysics: (origin: Vector3Like, direction: Vector3Like, distance: number) => number, output: Vector3, props: readonly SceneObstacle[] = []): Vector3 {
@@ -28,7 +29,19 @@ export function clipVehicleCamera(world: VoxelWorld, origin: Vector3Like, destin
         if(Math.abs(d)<.000001){if(o<low||o>high){leave=-1;break;}}
         else{const a=(low-o)/d,b=(high-o)/d;enter=Math.max(enter,Math.min(a,b));leave=Math.min(leave,Math.max(a,b));if(enter>leave)break;}
       }
-      if(enter<=leave)distance=Math.min(distance,Math.max(.22,enter-.28));
+      if(enter<=leave){
+        // A turning vehicle's broad box includes empty corners. Test each
+        // volume ray against its real body before pulling the camera inward.
+        if(prop.obb){
+          if(prop.obb.containsPoint(originOffset))enter=0;
+          else{
+            propRay.set(originOffset,direction);
+            if(!prop.obb.intersectRay(propRay,propHit))continue;
+            enter=propHit.distanceTo(originOffset);if(enter>length)continue;
+          }
+        }
+        distance=Math.min(distance,Math.max(.22,enter-.28));
+      }
     }
   }
   return output.copy(origin).addScaledVector(direction,Math.max(.22,distance));

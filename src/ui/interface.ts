@@ -214,7 +214,7 @@ export class Interface {
         <div class="mc-car-instruments"><span data-car-left aria-label="左转向灯">◀</span><b data-car-gear>D</b><span data-car-right aria-label="右转向灯">▶</span><small data-car-condition>动力正常 · 无故障降速</small></div>
         <div class="mc-car-actions"><button data-action="exit-drive">停车下车</button><button data-action="reset-look">视角回正</button><button data-action="record-flight" title="录制20秒实机画面">录制20秒</button></div>
         <div class="mc-car-actions mc-car-recovery"><button data-action="recover-car" title="只将你驾驶的汽车救援至附近安全公路">救援我的汽车</button><button data-action="clear-traffic" title="清理附近60米的事故车辆，保留你的汽车和世界变化">清理附近事故</button></div>
-        <small class="mc-car-keys"><kbd>W / S</kbd> 油门 / 倒车 <kbd>A / D</kbd> 转向 <kbd>Space</kbd> 刹车 <kbd>Esc</kbd> 下车</small>
+        <small class="mc-car-keys"><kbd>W / S</kbd> 油门 / 倒车 <kbd>A / D</kbd> 转向 <kbd>Space</kbd> 刹车 <kbd>G</kbd> 脱困 <kbd>Esc</kbd> 下车</small>
         <small class="mc-vehicle-look">鼠标拖动环视 · 滚轮缩放 · <kbd>R</kbd> 回正</small>
         <small class="mc-car-lights"><kbd>Z / C</kbd> 左 / 右灯 <kbd>X</kbd> 双闪 · 转向时自动示意</small>
       </section>
@@ -278,7 +278,7 @@ export class Interface {
 
       <details class="mc-performance mc-panel" hidden><summary>${icon('chart')}<span data-fps>— FPS</span><i>诊断</i></summary><div class="mc-stat-grid" data-stats><span>帧时间<b data-stat="frameMs">—</b></span><span>区块<b data-stat="chunks">—</b></span><span>绘制调用<b data-stat="drawCalls">—</b></span><span>三角形<b data-stat="triangles">—</b></span><span>待处理<b data-stat="pending">—</b></span><span>已修改<b data-stat="edits">—</b></span><span>活动碎块<b data-stat="activeFragments">0</b></span><span>落定废墟<b data-stat="settledFragments">0</b></span><span>支撑检查<b data-stat="supportPending">0</b></span></div><button class="mc-diagnostic-start" data-action="start"><span>进入 / 继续飞行</span>${icon('arrow')}</button></details>
 
-      <div class="mc-pilot-keys" hidden><span><kbd>W S</kbd> 前后</span><span><kbd>A D</kbd> 转向</span><span><kbd>Space</kbd> 升</span><span><kbd>Shift</kbd> 降</span><span><kbd>V</kbd> 观察</span></div>
+      <div class="mc-pilot-keys" hidden><span><kbd>W S</kbd> 前后</span><span><kbd>A D</kbd> 转向</span><span><kbd>Space</kbd> 升</span><span><kbd>Shift</kbd> 降</span><span><kbd>G</kbd> 脱困</span><span><kbd>V</kbd> 观察</span></div>
 
       <section class="mc-help mc-panel" role="dialog" aria-labelledby="mc-help-title" hidden>
         <div class="mc-help-top"><span class="mc-section-number">操作指南 · 当前模式</span><button class="mc-icon-button" data-action="help" aria-label="关闭操作说明">${icon('close')}</button></div>
@@ -789,9 +789,10 @@ export class Interface {
   }
 
   private updateFlightHint(): void {
-    if(this.bicycleState?.riding){this.flightHint.innerHTML='<kbd>W</kbd> 蹬车<span>·</span><kbd>Space</kbd> 刹车<span>·</span><kbd>F / E</kbd> 下车<span>·</span><kbd>M</kbd> 地图';return;}
-    if (this.carState?.driving) { this.flightHint.innerHTML = '<kbd>W / S</kbd> 油门 / 倒车<span>·</span><kbd>A / D</kbd> 转向<span>·</span><kbd>Esc</kbd> 下车'; return; }
-    if (this.vehicleState?.piloting) { this.flightHint.innerHTML=this.vehicleState.autopilot?(this.vehicleState.flightMode==='return'?'自动返航中<span>·</span>飞行按键接管<span>·</span>停稳后 <kbd>F</kbd> 下机':'鼠标拖动环视<span>·</span>暂停游览可悬停<span>·</span><kbd>H</kbd> 自动返航'):this.vehicleState.grounded?'<kbd>Space</kbd> 升空<span>·</span><kbd>F</kbd> 下机<span>·</span><kbd>H</kbd> 自动返航':'<kbd>Shift</kbd> 下降落地后 F 下机<span>·</span><kbd>H</kbd> 自动返航';return; }
+    const recovery='<span>·</span><kbd>G</kbd> 脱困';
+    if(this.bicycleState?.riding){this.flightHint.innerHTML='<kbd>W</kbd> 蹬车<span>·</span><kbd>Space</kbd> 刹车<span>·</span><kbd>F / E</kbd> 下车<span>·</span><kbd>M</kbd> 地图'+recovery;return;}
+    if (this.carState?.driving) { this.flightHint.innerHTML = '<kbd>W / S</kbd> 油门 / 倒车<span>·</span><kbd>A / D</kbd> 转向<span>·</span><kbd>Esc</kbd> 下车'+recovery; return; }
+    if (this.vehicleState?.piloting) { this.flightHint.innerHTML=(this.vehicleState.autopilot?(this.vehicleState.flightMode==='return'?'自动返航中<span>·</span>飞行按键接管<span>·</span>停稳后 <kbd>F</kbd> 下机':'鼠标拖动环视<span>·</span>暂停游览可悬停<span>·</span><kbd>H</kbd> 自动返航'):this.vehicleState.grounded?'<kbd>Space</kbd> 升空<span>·</span><kbd>F</kbd> 下机<span>·</span><kbd>H</kbd> 自动返航':'<kbd>Shift</kbd> 下降落地后 F 下机<span>·</span><kbd>H</kbd> 自动返航')+recovery;return; }
     const edit=this.currentTool!=='observe';
     const action={observe:'观察',carve:'挖除',blast:'爆破'}[this.currentTool];
     const mouse=this.mouseMode==='paused'?'点击画面接管':this.mouseMode==='locked'?'移动鼠标转向':'左拖 / 右拖转向';
@@ -847,16 +848,16 @@ export class Interface {
     if (mode === this.lastHelpMode) return;
     this.lastHelpMode = mode;
     const controls = this.require('.mc-controls');
-    if(mode==='bicycle'){this.require('#mc-help-title').textContent='沿海慢骑，也可以停下来。';this.require('.mc-help p').textContent='W 蹬车，S 制动后可以低速退行挪车，Space 刹车。转弯随车速变化，接近高台阶、断边或水面会停住；F / E 安全下车后继续步行。鼠标拖动只环视，不改变车头方向。';}
+    if(mode==='bicycle'){this.require('#mc-help-title').textContent='沿海慢骑，也可以停下来。';this.require('.mc-help p').textContent='W 蹬车，S 制动后可以低速退行挪车，Space 刹车。转弯随车速变化，接近高台阶、断边或水面会停住；F / E 安全下车后继续步行。卡在障碍旁可按 G，移到附近安全地面。鼠标拖动只环视，不改变车头方向。';}
     else if (mode === 'drive') {
       this.require('#mc-help-title').textContent = '沿着公路，开向海岸。';
-      this.require('.mc-help p').textContent = '旧城、工业港、山麓社区与海岬由真实道路相连。按 M 查看导航；停车下车后可以继续步行探索。';
+      this.require('.mc-help p').textContent = '旧城、工业港、山麓社区与海岬由真实道路相连。按 M 查看导航；停车下车后可以继续步行探索。车辆卡住或侧翻，可按 G 救援到附近安全公路。';
     } else if (mode === 'walk') {
       this.require('#mc-help-title').textContent = '沿着街灯，慢慢走。';
       this.require('.mc-help p').textContent = '靠近长椅、面向座位按 E 坐下；坐着时拖动鼠标看风景，E / Space 起身，WASD 起身后行走。面向有安全落点的低栏按 E 翻越；Space 是普通跳跃。Esc 释放操作，C 切换视角。';
     } else if (mode === 'pilot') {
       this.require('#mc-help-title').textContent = '沿着海岸，飞一圈。';
-      this.require('.mc-help p').textContent = '手动起飞按 Space，旋翼启动时需短暂等待。手动巡航更快，自动游览会为观景与返航减速。左红右绿航行灯、尾灯和防撞灯随引擎开启，低空使用着陆灯。拖动环视、滚轮缩放，R 回正；打开地图或手记不打断自动游览。';
+      this.require('.mc-help p').textContent = '手动起飞按 Space，旋翼启动时需短暂等待。手动巡航更快，自动游览会为观景与返航减速。左红右绿航行灯、尾灯和防撞灯随引擎开启，低空使用着陆灯。拖动环视、滚轮缩放，R 回正；打开地图或手记不打断自动游览。卡在楼檐或障碍旁可按 G 脱困并悬停，H 则自动飞回停机坪。';
     } else {
       this.require('#mc-help-title').textContent = this.vehicleAvailable ? '从码头，出发。' : '从海岸，出发。';
       this.require('.mc-help p').textContent = '自由镜头悬浮观察，WASD 水平移动，Space / E 上升、Q 下降；地面和建筑会挡住镜头。地面探索请选择顶部「步行」。鼠标锁定时直接移动转向，未锁定时左拖或右拖转向；挖除、爆破用左键点按或长按。';

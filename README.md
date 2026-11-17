@@ -10,7 +10,7 @@
 
 ![GitHub Pages 上线版本：码头与旧城](docs/demo/online-overview.jpg)
 
-2026-11-17 已上线。载具脱困更新的101个测试文件／659项检查和生产构建通过；旧城直升机、自行车脱困后继续操纵及刷新恢复已实测。[脱困说明](docs/RECOVERY.md) · [首次发布验证记录](docs/DEPLOYMENT.md#本次发布验证)
+2026-11-17 已上线。载具脱困及刷新恢复已实测；斜向车辆旁的空隙现在使用随车身旋转的碰撞，骑行与镜头避让已做实机对照，G 脱困已加入各载具的操作提示。[斜车旁通行实测](docs/TRAFFIC-CONTACT.md) · [脱困说明](docs/RECOVERY.md) · [首次发布验证记录](docs/DEPLOYMENT.md#本次发布验证)
 
 ## 演示
 
