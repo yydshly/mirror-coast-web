@@ -13,7 +13,7 @@ it('makes a real roadside crown collidable and releases it when its actual groun
   const aircraft=physics.createVehicle(position,()=>{});
   try{
    expect(aircraft.clearAt(position,q)).toBe(true);aircraft.syncProps([crown]);expect(aircraft.clearAt(position,q)).toBe(false);
-   const part=art.decorationParts().find(p=>p.geometry.type==='IcosahedronGeometry'&&Math.abs(p.matrix.elements[12]-position.x)<.01&&Math.abs(p.matrix.elements[14]-(position.z-.2))<.01)!;
+   const part=art.decorationParts().find(p=>p.geometry.name==='leaf-cluster'&&Math.abs(p.matrix.elements[12]-position.x)<.01&&Math.abs(p.matrix.elements[14]-(position.z-.2))<.01)!;
    expect(part).toBeDefined();for(const a of part.anchors)world.setVoxel(a.x,a.y,a.z,0);art.sync();expect(art.obstacles.includes(crown)).toBe(false);
    aircraft.syncProps(art.obstacles.includes(crown)?[crown]:[]);expect(aircraft.clearAt(position,q)).toBe(true);
   }finally{aircraft.dispose();}

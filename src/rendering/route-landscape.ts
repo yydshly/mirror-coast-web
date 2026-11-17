@@ -1,4 +1,7 @@
-import {CylinderGeometry,Group,IcosahedronGeometry,InstancedMesh,Matrix4,MeshStandardMaterial,Quaternion,Vector3,type BufferGeometry,type Scene} from 'three';
+import {CylinderGeometry,Group,InstancedMesh,Matrix4,MeshStandardMaterial,Quaternion,Vector3,type BufferGeometry,type Scene} from 'three';
+import type {BuildingRegistry} from '../destruction/buildings';
+import {broadleafCrown,treeEntranceCorridors,treeSeed,type TreeCorridor} from '../world/tree-form';
+import {canopyGeometry} from './canopy-geometry';
 import {partCollisionBounds,type SceneObstacle} from '../input/scene-collisions';
 import type {DecorationPart} from '../destruction/decorations';
 import {NAVIGATION_LINES} from '../gameplay/navigation';
@@ -19,12 +22,13 @@ const trailClear=(x:number,z:number,r:number)=>!footways.some(l=>l.points.slice(
 export class RouteLandscape{
  readonly obstacles:SceneObstacle[]=[];
  private root=new Group();private parts:Part[]=[];private batches:Batch[]=[];
- private trunk=new CylinderGeometry(.13,.22,1,7);private crown=new IcosahedronGeometry(1,0);private grass=new CylinderGeometry(0,.055,.7,3);
+ private trunk=new CylinderGeometry(.13,.22,1,7);private crown=canopyGeometry();private grass=new CylinderGeometry(0,.055,.7,3);private corridors:TreeCorridor[]=[];
  private wood=surfaceFinish(new MeshStandardMaterial({color:'#73614b',roughness:1}),'wood');
- private leaves=[new MeshStandardMaterial({color:'#65735a',roughness:1}),new MeshStandardMaterial({color:'#485d4d',roughness:1}),new MeshStandardMaterial({color:'#828664',roughness:1})];
+ private leaves=[new MeshStandardMaterial({color:'#607b56',roughness:1}),new MeshStandardMaterial({color:'#496b54',roughness:1}),new MeshStandardMaterial({color:'#7d9164',roughness:1})];
  private grasses=[new MeshStandardMaterial({color:'#a39c70',roughness:1}),new MeshStandardMaterial({color:'#7e8a62',roughness:1})];
  private wind={value:0};private zero=new Matrix4().makeScale(0,0,0);private trees=0;private plants=0;
- constructor(scene:Scene,private world:VoxelWorld){
+ constructor(scene:Scene,private world:VoxelWorld,buildings?:BuildingRegistry){
+  this.corridors=buildings?treeEntranceCorridors(buildings):[];
   this.root.name='coastal-route-landscape';scene.add(this.root);
   for(const material of [...this.leaves,...this.grasses])material.onBeforeCompile=s=>{s.uniforms.uRouteWind=this.wind;s.vertexShader=s.vertexShader.replace('#include <common>','#include <common>\nuniform float uRouteWind;').replace('#include <begin_vertex>','#include <begin_vertex>\ntransformed.x+=sin(uRouteWind*1.1+instanceMatrix[3].x*.11+instanceMatrix[3].z*.07)*max(0.,position.y+.5)*.045;');};
   // A green edge connects the shops to the broad open waterfront. Crossings,
@@ -90,9 +94,22 @@ export class RouteLandscape{
   const anchors=[{x:Math.floor(x),y:y-1,z:Math.floor(z)}],tilt=lean?-.16:-.045,q=new Quaternion().setFromAxisAngle(new Vector3(0,0,1),tilt);
   const center=new Vector3(0,height*.45,0).applyQuaternion(q).add(new Vector3(x,y,z));
   this.add(this.trunk,this.wood,center,new Vector3(1,height*.9,1),anchors,true,q);
-  for(let i=0;i<3;i++){
-   const p=new Vector3((i-1)*.65,height*.72+Math.sin(i*1.7)*.55,i%2?.35:-.35).applyQuaternion(q).add(new Vector3(x,y,z));
-   this.add(this.crown,this.leaves[(this.trees+i)%3],p,new Vector3(1.65+(i%2)*.4,lean?.8:1.3,1.45),anchors,true);
+  const seed=treeSeed(x,z),spread=height*(lean?.37:.34),forms=broadleafCrown(seed);
+  const doorway=this.corridors.find(d=>z>=d.minZ-2&&z<=d.maxZ+2&&Math.abs(x-(d.minX+d.maxX)/2)<3.5);
+  const away=doorway?(x>=(doorway.minX+doorway.maxX)/2?.65:-.65):0;
+  for(const [i,lobe]of forms.entries()){
+   const p=new Vector3(lobe.x*spread,height*.91+lobe.y*height*.33,lobe.z*spread).applyQuaternion(q).add(new Vector3(x,y,z));
+   p.x+=away;
+   const scale=new Vector3(lobe.rx*spread*2,lobe.ry*height*.66,lobe.rz*spread*2);
+   for(const door of this.corridors)if(p.z+scale.z/2>door.minZ&&p.z-scale.z/2<door.maxZ&&p.x+scale.x/2>door.minX&&p.x-scale.x/2<door.maxX){
+    const left=p.x-scale.x/2,right=p.x+scale.x/2;
+    if(x>=(door.minX+door.maxX)/2){const edge=Math.max(left,door.maxX);scale.x=Math.max(0,right-edge);p.x=(right+edge)/2;}
+    else{const edge=Math.min(right,door.minX);scale.x=Math.max(0,edge-left);p.x=(left+edge)/2;}
+   }
+   if(scale.x<.25)continue;
+   const fork=new Vector3(0,height*.58,0).applyQuaternion(q).add(new Vector3(x,y,z)),delta=p.clone().sub(fork);
+   this.add(this.trunk,this.wood,fork.clone().add(p).multiplyScalar(.5),new Vector3(.42,delta.length(),.42),anchors,true,new Quaternion().setFromUnitVectors(new Vector3(0,1,0),delta.normalize()));
+   this.add(this.crown,this.leaves[(seed+i)%3],p,scale,anchors,true,new Quaternion().setFromAxisAngle(new Vector3(0,1,0),(seed%5-2)*.06));
   }
   this.trees++;
  }

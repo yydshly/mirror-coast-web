@@ -1,6 +1,8 @@
 import {BufferGeometry,Float32BufferAttribute,Group,Mesh,MeshStandardMaterial,type Scene} from 'three';
 import {palette,Material as M} from '../world/palette';
 import type {Vector3Like,VoxelWorld} from '../world/voxel';
+import type {BuildingRegistry} from '../destruction/buildings';
+import {TreePreview} from './tree-preview';
 type Column={cx:number;cz:number;keys:string[];detailed:boolean;ready:boolean;start:number;end:number};
 type Tile={key:string;mesh:Mesh;columns:Column[];indices:Uint32Array;dirty:boolean};
 type Sample={height:number;material:number;side:number};
@@ -12,7 +14,9 @@ export class TerrainPreview{
   private root=new Group();private columns=new Map<string,Column>();private tiles=new Map<string,Tile>();
   private material=new MeshStandardMaterial({vertexColors:true,roughness:1});private samples=new Map<string,Sample>();private clock=Infinity;
   private readyDirty=true;private tilesDirty=false;private lastFocus={x:Infinity,y:Infinity,z:Infinity};private lastDetailDistance=-1;
-  constructor(scene:Scene,private world:VoxelWorld){
+  private trees:TreePreview;
+  constructor(scene:Scene,private world:VoxelWorld,buildings?:BuildingRegistry){
+    this.trees=new TreePreview(world,buildings);
     this.root.name='coastal-distant-voxels';scene.add(this.root);
     for(const chunk of world.chunks.values()){
       const key=`${chunk.cx},${chunk.cz}`;let c=this.columns.get(key);if(!c){c={cx:chunk.cx,cz:chunk.cz,keys:[],detailed:false,ready:false,start:0,end:0};this.columns.set(key,c);}c.keys.push(chunk.key);
@@ -24,7 +28,7 @@ export class TerrainPreview{
     const key=`${x},${z}`,old=this.samples.get(key);if(old)return old;
     const c=this.columns.get(`${x>>5},${z>>5}`);let best:Sample={height:0,material:0,side:0};
     if(c){const top=Math.max(...c.keys.map(k=>Number(k.split(',')[1])))*32+31;
-      for(const dx of [1,3])for(const dz of [1,3])for(let y=top;y>=0;y--){const m=this.world.getVoxel(x+dx,y,z+dz);if(!m)continue;
+      for(const dx of [1,3])for(const dz of [1,3])for(let y=top;y>=0;y--){const m=this.world.getVoxel(x+dx,y,z+dz);if(!m||this.trees.contains(x+dx,y,z+dz,m))continue;
         if(y+1>best.height){const under=this.world.getVoxel(x+dx,Math.max(0,y-3),z+dz);best={height:y+1,material:m,side:m===M.Roof||m===M.Terracotta?(under&&under!==M.Roof&&under!==M.Terracotta?under:M.Cream):m};}break;
       }
     }
@@ -43,6 +47,15 @@ export class TerrainPreview{
         if(h>right)quad([[x+4,right,z+4],[x+4,right,z],[x+4,h,z],[x+4,h,z+4]],s.side);
         if(h>back)quad([[x+4,back,z],[x,back,z],[x,h,z],[x+4,h,z]],s.side);
         if(h>front)quad([[x,front,z+4],[x+4,front,z+4],[x+4,h,z+4],[x,h,z+4]],s.side);
+      }
+      for(const b of this.trees.boxes(c.cx,c.cz)){
+        const {minX:x,minY:y,minZ:z,maxX:xx,maxY:yy,maxZ:zz,material:m}=b;
+        quad([[x,yy,z],[x,yy,zz],[xx,yy,zz],[xx,yy,z]],m);
+        quad([[x,y,zz],[x,y,z],[xx,y,z],[xx,y,zz]],m);
+        quad([[x,y,z],[x,y,zz],[x,yy,zz],[x,yy,z]],m);
+        quad([[xx,y,zz],[xx,y,z],[xx,yy,z],[xx,yy,zz]],m);
+        quad([[xx,y,z],[x,y,z],[x,yy,z],[xx,yy,z]],m);
+        quad([[x,y,zz],[xx,y,zz],[xx,yy,zz],[x,yy,zz]],m);
       }c.end=indices.length;
     }
     const geometry=new BufferGeometry();geometry.setAttribute('position',new Float32BufferAttribute(positions,3));geometry.setAttribute('color',new Float32BufferAttribute(colors,3));geometry.setIndex(indices);geometry.computeVertexNormals();geometry.computeBoundingSphere();tile.indices=new Uint32Array(indices);
@@ -85,6 +98,6 @@ export class TerrainPreview{
       if(changed)index.needsUpdate=true;tile.mesh.visible=!allDetailed;
     }
   }
-  get diagnostics(){return{sectors:this.tiles.size,columns:this.columns.size,detailed:[...this.columns.values()].filter(c=>c.detailed&&c.ready).length,dirty:[...this.tiles.values()].filter(t=>t.dirty).length};}
+  get diagnostics(){return{sectors:this.tiles.size,columns:this.columns.size,detailed:[...this.columns.values()].filter(c=>c.detailed&&c.ready).length,dirty:[...this.tiles.values()].filter(t=>t.dirty).length,trees:this.trees.count};}
   dispose(){this.root.removeFromParent();for(const t of this.tiles.values())t.mesh.geometry.dispose();this.material.dispose();}
 }

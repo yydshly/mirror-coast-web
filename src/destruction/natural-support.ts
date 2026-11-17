@@ -3,9 +3,10 @@ import {Material as M} from '../world/palette';
 import type {VoxelEdit,VoxelWorld} from '../world/voxel';
 import {BuildingRegistry,decodeWorldIndex,worldIndex} from './buildings';
 import {makeFragments,isStructureResultCurrent,type StructureResult} from './structure';
+import {refineTreeCanopy,treeEntranceCorridors} from '../world/tree-form';
 
-/** Tree ownership is metadata over the existing immutable terrain. */
-export function registerNaturalTrees(world:VoxelWorld,buildings:BuildingRegistry):number{
+/** Stable tree ownership; optional shaping runs before saved edits are loaded. */
+export function registerNaturalTrees(world:VoxelWorld,buildings:BuildingRegistry,refine=false):number{
  const owned=new Set<number>();for(const b of buildings.all)for(const i of b.indices)owned.add(i);
  const roots:Array<{x:number;y:number;z:number;top:number;cells:Set<number>}>=[];
  for(const chunk of world.chunks.values())for(let i=0;i<chunk.voxels.length;i++){
@@ -21,12 +22,19 @@ export function registerNaturalTrees(world:VoxelWorld,buildings:BuildingRegistry
  for(const root of roots)for(let y=root.y;y<=Math.min(95,root.top+6);y++)for(let z=root.z-5;z<=root.z+5;z++)for(let x=root.x-5;x<=root.x+5;x++){
   const index=worldIndex(x,y,z);if(owned.has(index))continue;const m=world.getVoxel(x,y,z);
   if(m!==M.Leaves&&m!==M.Wood&&!(m===M.Grass&&y>=root.y+2))continue;
+  // A hillside's grass cap is terrain, even if it rises into a tree's bounds.
+  if(m===M.Grass&&[M.Dirt,M.Rock,M.Sand,M.Concrete,M.Road,M.Stripe].includes(world.getVoxel(x,y-1,z)as never))continue;
   if(m===M.Wood&&(x!==root.x||z!==root.z))continue;
   const distance=(x-root.x)**2+(z-root.z)**2+Math.max(0,y-root.top-3)**2,old=assigned.get(index);
   if(!old||distance<old.distance)assigned.set(index,{root,distance});
  }
  for(const [index,{root}]of assigned)root.cells.add(index);
- for(const root of roots)if(root.cells.size)buildings.add(`tree-${root.x}-${root.y}-${root.z}`,'沿岸树木',root.y,root.cells);
+ const corridors=refine?treeEntranceCorridors(buildings):[];
+ for(const root of roots)if(root.cells.size){if(refine)refineTreeCanopy(world,root,corridors);buildings.add(`tree-${root.x}-${root.y}-${root.z}`,'沿岸树木',root.y,root.cells);}
+ if(refine)for(const chunk of world.chunks.values())for(let i=0;i<chunk.voxels.length;i++)if(chunk.voxels[i]===M.Leaves){
+  const x=chunk.cx*32+(i&31),z=chunk.cz*32+((i>>5)&31),y=chunk.cy*32+(i>>10),index=worldIndex(x,y,z);
+  if(!owned.has(index)&&!assigned.has(index))world.setVoxel(x,y,z,M.Air,false);
+ }
  return roots.length;
 }
 

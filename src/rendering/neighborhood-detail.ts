@@ -1,5 +1,6 @@
 import type {DecorationPart} from '../destruction/decorations';
-import {BoxGeometry,BufferGeometry,CylinderGeometry,Euler,IcosahedronGeometry,InstancedMesh,Matrix4,MeshStandardMaterial,Quaternion,Scene,Vector3} from 'three';
+import {BoxGeometry,BufferGeometry,CylinderGeometry,Euler,InstancedMesh,Matrix4,MeshStandardMaterial,Quaternion,Scene,Vector3} from 'three';
+import {canopyGeometry} from './canopy-geometry';
 import {decodeWorldIndex,type BuildingRecord,type BuildingRegistry} from '../destruction/buildings';
 import {orientedCollisionBounds,partCollisionBounds,type SceneObstacle} from '../input/scene-collisions';
 import {findFurnitureFooting,furnitureFootContacts} from '../world/furniture-footing';
@@ -30,7 +31,7 @@ export class NeighborhoodDetail{
   private readonly bevel=humanBox(.09);
   private readonly pipe=new CylinderGeometry(.5,.5,1,10);
   private readonly pot=new CylinderGeometry(.24,.17,.40,12);
-  private readonly foliage=new IcosahedronGeometry(.5,1);
+  private readonly foliage=canopyGeometry();
   private readonly batches:Batch[]=[];
   private readonly materials:MeshStandardMaterial[]=[];
   private readonly bounds:Array<{bounds:SceneObstacle;anchors:Anchor[]}>=[];

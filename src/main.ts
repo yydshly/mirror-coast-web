@@ -275,7 +275,7 @@ async function boot(): Promise<void> {
     addOuterLandmarks(world,buildings);
   }
   const cityMassing=dressed?applyCityMassing(world,buildings):undefined;
-  registerNaturalTrees(world,buildings);
+  registerNaturalTrees(world,buildings,dressed);
   buildings.captureFoundations(world);
   camera.position.set(spawn.x, spawn.y, spawn.z);
   camera.lookAt(lookAt.x, lookAt.y, lookAt.z);
@@ -345,7 +345,7 @@ async function boot(): Promise<void> {
   const regionArt = !dressed ? undefined : new RegionArt(scene, decorWorld);
   const neighborhood=!dressed?undefined:new NeighborhoodDetail(scene,decorWorld,buildings);
   const entrances=!dressed?undefined:new BuildingEntrances(scene,world,buildings);
-  const routeLandscape=dressed?new RouteLandscape(scene,decorWorld):undefined;
+  const routeLandscape=dressed?new RouteLandscape(scene,decorWorld,buildings):undefined;
   generatingDecor=false;originalCells.clear();
   routeLandscape?.sync();
   for(const art of [coastalArt,streetArt,regionArt,neighborhood])art?.sync(world.chunks.keys());
@@ -449,7 +449,7 @@ async function boot(): Promise<void> {
   const supportDirty=new Set<string>();
   const colliderRevisions = new Map<string, number>();
   const meshes = new Map<string, Mesh<BufferGeometry, MeshStandardMaterial>>();
-  const terrainPreview = !dressed ? undefined : new TerrainPreview(scene,world);
+  const terrainPreview = !dressed ? undefined : new TerrainPreview(scene,world,buildings);
   const meshQueue = new MeshQueue(world, (result) => {
     physics!.syncChunk(result);
     colliderRevisions.set(result.key, result.revision);
