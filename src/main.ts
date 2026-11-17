@@ -14,6 +14,7 @@ import { CHUNK_SIZE, WORLD_SEED, WORLD_VERSION } from './world/voxel';
 import { MeshQueue } from './world/mesh-queue';
 import { WorldPersistence, type PlayerState } from './persistence/storage';
 import { Interface } from './ui/interface';
+import {showStartupFailure} from './ui/startup-error';
 import type { Tool } from './ui/interface';
 import { FlightController } from './input/flight';
 import { Environment } from './rendering/environment';
@@ -228,13 +229,16 @@ async function boot(): Promise<void> {
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
   let renderer: WebGLRenderer;
+  let contextMessage='';
+  const contextError=(event:Event)=>{contextMessage=(event as WebGLContextEvent).statusMessage??'';};
+  canvas.addEventListener('webglcontextcreationerror',contextError);
   try {
     renderer = new WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   } catch (error) {
-    ui.setLoading(1);
-    ui.toast('无法启动 WebGL2。请使用支持硬件加速的现代桌面浏览器。', true);
-    throw error;
-  }
+    console.error('Mirror Coast graphics startup failed:',error);
+    showStartupFailure(root,{kind:'graphics',error,contextMessage});
+    return;
+  }finally{canvas.removeEventListener('webglcontextcreationerror',contextError);}
   // Keep the 3D buffer modest on dense displays; DOM text/maps remain native
   // resolution. A 1.5x buffer added 125% pixels to every sea/shadow frame.
   const basePixelRatio=Math.min(window.devicePixelRatio,1.25),adaptiveResolution=new AdaptiveResolution();
@@ -1473,11 +1477,6 @@ function errorMessage(error: unknown): string { return error instanceof Error ? 
 void boot().catch((error: unknown) => {
   console.error('Mirror Coast startup failed:', error);
   const root = document.querySelector<HTMLElement>('#interface');
-  if (root) {
-    const message = document.createElement('div');
-    message.className = 'boot-error';
-    message.textContent = `城市启动失败：${errorMessage(error)}`;
-    root.append(message);
-  }
+  if (root) showStartupFailure(root,{kind:'startup',error});
 });
 

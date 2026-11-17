@@ -7,7 +7,7 @@ import {
   SphereGeometry,SRGBColorSpace, TorusGeometry, Vector2,Vector3, type Material as ThreeMaterial,
 } from 'three';
 import type { BuildingRecord, BuildingRegistry } from '../destruction/buildings';
-import { Material } from '../world/palette';
+import { Material,palette } from '../world/palette';
 import type { VoxelWorld, Vector3Like } from '../world/voxel';
 import { orientedBoxBounds,orientedCollisionBounds,partCollisionBounds,type SceneObstacle } from '../input/scene-collisions';
 import {findFurnitureFooting,furnitureFootContacts} from '../world/furniture-footing';
@@ -124,6 +124,7 @@ export class StreetArt {
   private readonly brass = this.material('#9d8251', .55, .45);
   private readonly terracotta = this.material('#9c5842', .87);
   private readonly slate = this.material('#4d645f', .83);
+  private readonly facadePaints=new Map<number,MeshStandardMaterial>();
   private readonly rubber = this.material('#202829', .93);
   private readonly coffee=this.material('#49372a',.35);
   private readonly petals=['#c4bca5','#b68d8b','#be9a5f'].map(c=>this.material(c,.96));
@@ -331,6 +332,7 @@ export class StreetArt {
     const style = index % 5;
     const frames = style === 0 || style === 3 ? this.iron : style === 1 ? this.timber : this.cream;
     const faces = this.faces(building);
+    this.architecturalEnvelope(building,faces,index);
     for (let side = 0; side < faces.length; side++) {
       const face = faces[side];
       for (let y = base + 1; y <= building.bounds.maxY - 2; y += 4) {
@@ -369,6 +371,65 @@ export class StreetArt {
     }
     if (index % 3 === 0) this.fireEscape(building, faces[3]);
     this.rooftop(building, index);
+  }
+
+  /** Broad architectural hierarchy before small fittings: a grounded base,
+   * slender floor lines and a roof silhouette selected for the building scale.
+   * Parts reuse the existing instanced batches, collision and support system. */
+  private architecturalEnvelope(building:BuildingRecord,faces:Face[],index:number):void{
+    const b=building.bounds,base=building.foundationY,x0=b.minX+1,x1=b.maxX-1,z0=b.minZ+1,z1=b.maxZ-1;
+    const width=x1-x0+1,depth=z1-z0+1,px=x0+1,pz=z0+1;
+    let roof=b.maxY;
+    while(roof>base){const m=this.world.getVoxel(px,roof,pz);if(m===Material.Roof||m===Material.Terracotta)break;roof--;}
+    if(roof<=base+4)return;
+    const height=roof-base;
+    for(const face of faces){
+      const wall=[0,Math.floor(face.width/2),face.width-1].map(u=>face.cell(u,base)).map(a=>this.world.getVoxel(a.x,a.y,a.z)).find(m=>m===Material.Cream||m===Material.Blue||m===Material.Mint);
+      let paint=wall===undefined?undefined:this.facadePaints.get(wall);
+      if(wall!==undefined&&!paint){paint=surfaceFinish(this.material('#ffffff',.90),'stone');paint.name='facade-plaster-coat';paint.color.fromArray(palette[wall].color);this.facadePaints.set(wall,paint);}
+      for(let y=base+3;y<roof-1;y+=4)for(let u=0;u<face.width;u+=4){
+        const length=Math.min(4,face.width-u),anchor=face.cell(Math.floor(u+length/2),y);
+        const anchors=Array.from({length},(_,i)=>face.cell(u+i,y));
+        // Preserve the immutable voxel base and legacy saves. A thin matching
+        // plaster coat narrows the visible band, and never covers a saved hole
+        // or a player's edited material. Brick buildings keep masonry bands.
+        if(paint&&anchors.every(a=>this.world.getVoxel(a.x,a.y,a.z)===Material.Trim))this.faceBox(face,u+length/2,y+.405,-.015,length-.012,.79,.04,paint,anchors);
+        if(this.world.getVoxel(anchor.x,anchor.y,anchor.z))this.faceBox(face,u+length/2,y+.88,.045,length-.012,.13,.18,this.cream,[anchor]);
+      }
+      // A distinct base and corner piers keep doors/windows clear and provide
+      // depth at street scale without pushing furniture into the pavement.
+      for(const u of [.20,face.width-.20])for(let y=base;y<roof-1;y+=4){
+        const h=Math.min(3.72,roof-1-y),anchor=face.cell(Math.max(0,Math.min(face.width-1,Math.floor(u))),y+1);
+        if(h>0&&this.world.getVoxel(anchor.x,anchor.y,anchor.z))this.faceBox(face,u,y+h/2,.055,.24,h,.22,y===base?this.slate:this.cream,[anchor]);
+      }
+    }
+    const top=roof+1,cx=(x0+x1+1)/2,cz=(z0+z1+1)/2;
+    // Roof additions stay within the existing eaves. Their actual boxes are
+    // also their colliders; no invisible rectangular cap over a pitched roof.
+    const roofPart=(x:number,z:number,sx:number,sz:number,bottom:number,sy:number,material:MeshStandardMaterial)=>{
+      const anchors:Cell[]=[];
+      for(const dx of [-.36,.36])for(const dz of [-.36,.36])anchors.push({x:Math.floor(x+dx*sx),y:roof,z:Math.floor(z+dz*sz)});
+      if(anchors.every(a=>!!this.world.getVoxel(a.x,a.y,a.z)))this.solidCube(x,bottom+sy/2,z,sx,sy,sz,material,anchors,true);
+    };
+    if(height<25&&index%3!==0){
+      // Stepped clay/slate gables retain the voxel language while giving the
+      // shorter old-town houses a recognizable silhouette from across the bay.
+      const ridgeX=width>=depth,paint=index%2?this.terracotta:this.slate;
+      for(let layer=0;layer<6;layer++){
+        const inset=layer*Math.min(width,depth)*.075;
+        roofPart(cx,cz,ridgeX?width-.32:width-.32-inset*2,ridgeX?depth-.32-inset*2:depth-.32,top+layer*.30,.30,paint);
+      }
+    }else if(height>=25){
+      // Taller blocks step back at the crown instead of repeating the wall
+      // grid all the way to one enormous white slab.
+      roofPart(cx,cz,width*.67,depth*.64,top,1.35,index%2?this.slate:this.cream);
+      roofPart(cx,cz,width*.70,depth*.67,top+1.35,.16,this.iron);
+      roofPart(cx,cz,width*.49,depth*.46,top+1.51,.38,this.slate);
+    }else{
+      // A low clerestory reads as a workshop/warehouse, distinct from homes.
+      roofPart(cx,cz,width*.70,depth*.37,top,.65,this.iron);
+      roofPart(cx,cz,width*.73,depth*.40,top+.65,.18,this.slate);
+    }
   }
 
   private balcony(face: Face, u: number, y: number, anchors: Cell[]): void {
