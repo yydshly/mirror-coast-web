@@ -15,6 +15,8 @@ import { MeshQueue } from './world/mesh-queue';
 import { WorldPersistence, type PlayerState } from './persistence/storage';
 import { Interface } from './ui/interface';
 import {showStartupFailure} from './ui/startup-error';
+import {GraphicsRecovery} from './rendering/graphics-recovery';
+import {GraphicsRecoveryPanel} from './ui/graphics-recovery';
 import type { Tool } from './ui/interface';
 import { FlightController } from './input/flight';
 import { Environment } from './rendering/environment';
@@ -91,6 +93,7 @@ async function boot(): Promise<void> {
   const root = document.querySelector<HTMLElement>('#interface')!;
   let tool: Tool = 'observe';
   let ready = false;
+  let graphicsRecovery:GraphicsRecovery|undefined;let graphicsPanel:GraphicsRecoveryPanel|undefined;let graphicsClockReset=false;let graphicsUnsaved=false;
   let saveState: 'saving' | 'saved' | 'error' | 'loading' = 'loading';
   let reloading = false;
   let changingSave = false;
@@ -123,6 +126,7 @@ async function boot(): Promise<void> {
   let car: CoastalCar | undefined;
   let restoredCar: CarState | undefined;
   let driving = false;
+  let restoredActiveVehicle:PlayerState['activeVehicle'];
   let bicycle:Bicycle|undefined;let cycling=false;let restoredBicycle:BicycleState|undefined;
   let boat:CoastalBoat|undefined;let boating=false;let restoredBoat:BoatState|undefined;
   let carObstacles: SceneObstacle[] = [];
@@ -287,6 +291,7 @@ async function boot(): Promise<void> {
     bounds: world.bounds,
     onStatus: (status, message) => {
       saveState = status;
+      if(status==='saved')graphicsUnsaved=false;
       ui.setSaveStatus(status, message);
       canvas.dataset.saveStatus = status;
     },
@@ -309,6 +314,7 @@ async function boot(): Promise<void> {
         if(saved.player.navigationTarget)trackedDestination=saved.player.navigationTarget;
         if(journey.state.active&&journey.chapter)trackedDestination=journey.chapter.target;
         restoredCar = saved.player.car;
+        restoredActiveVehicle=saved.player.activeVehicle;
         restoredBicycle=saved.player.bicycle;
         restoredBoat=saved.player.boat;
         restoredPosture=saved.player.posture;
@@ -554,6 +560,7 @@ async function boot(): Promise<void> {
   }
 
   document.addEventListener('keydown', (event) => {
+    if(graphicsRecovery?.active){event.stopImmediatePropagation();return;}
     if(signalConsole?.isOpen){if(event.code==='Escape'){event.preventDefault();event.stopImmediatePropagation();signalConsole.close();}return;}
     handleGameShortcut(event,{ready,isLab,helpOpen:ui.isHelpOpen,menuOpen:ui.isMenuOpen,tourOpen:ui.isModalOpen,mapOpen:ui.isMapOpen,fieldbookOpen:fieldbook?.isOpen??false,hasFieldbook:!!fieldbook,walking:exploration==='walk',piloting,driving,cycling,boating,observing:tool==='observe'}, {
       toggleHelp:()=>ui.toggleHelp(),toggleFieldbook:()=>fieldbook?.toggle(),closeFieldbook:()=>fieldbook?.setOpen(false),releaseControls:releaseControlsForOverlay,
@@ -573,16 +580,6 @@ async function boot(): Promise<void> {
   };
   window.addEventListener('resize', resize);
   resize();
-  canvas.addEventListener('webglcontextlost', (event) => {
-    event.preventDefault();
-    controller?.stop();
-    walker?.stop();
-    helicopter?.setPiloting(false);
-    car?.setDriving(false);
-    ui.toast('图形上下文中断。请等待存档完成后刷新页面。', true);
-    void persistence?.flush().catch(() => undefined);
-  });
-
   ui.setLoading(.08,'正在准备日夜与雨滴材质');
   const endWeatherWarmup=rain?.prepareMaterials(),endDecorationWarmup=decorPhysics.prepareMaterials();
   const warmGeometry=new BoxGeometry(1,1,1),count=warmGeometry.getAttribute('position').count;
@@ -609,7 +606,27 @@ async function boot(): Promise<void> {
   let frameWindow:number[]=[];let shadowTimer=0;
   let vehicleTimer = 0;
   let discoveryTimer=0;
+  const captureGraphicsState=()=>{savePose();if(ready&&!changingSave&&!reloading)persistence!.recordFragments(physics!.snapshot());};
+  graphicsRecovery=new GraphicsRecovery({
+    pause:()=>{
+      recordAbort?.abort();releaseControlsForOverlay();ui.closeMenu();fieldbook?.setOpen(false);
+      for(const dialog of document.querySelectorAll<HTMLDialogElement>('dialog[open]'))dialog.close();
+      root.inert=true;canvas.hidden=true;
+      if(!graphicsPanel)graphicsPanel=new GraphicsRecoveryPanel({
+        resume:()=>{graphicsRecovery!.resume();},reload:()=>{void graphicsRecovery!.reload();},save:()=>{void graphicsRecovery!.save();},
+        backup:async()=>{if(!ready)throw new Error('尚未进入游玩，原有存档保持不变。');captureGraphicsState();downloadWorldSave(persistence!.exportMemorySave());},
+      });
+    },
+    save:async()=>{captureGraphicsState();await persistence!.flush();},
+    resume:saved=>{releaseControlsForOverlay();environment?.restoreGraphics();renderer.shadowMap.needsUpdate=true;root.inert=false;canvas.hidden=false;graphicsClockReset=true;graphicsUnsaved=!saved;ui.setMouseMode('paused');if(!saved)ui.toast('画面已恢复，但本地保存尚未成功。请保留导出的备份，并检查浏览器存储。',true);else ui.toast('画面已恢复，现场保留。可重新接管继续游玩。');},
+    reload:()=>{reloading=true;location.reload();},
+    change:state=>{document.querySelector<HTMLElement>('#app')!.dataset.graphicsState=state.active?(state.restored?'restored-paused':'lost'):'running';if(state.active)graphicsPanel?.update(state);else{graphicsPanel?.dispose();graphicsPanel=undefined;}},
+  });
+  canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();graphicsRecovery!.lost();});
+  canvas.addEventListener('webglcontextrestored',()=>graphicsRecovery!.restored());
   renderer.setAnimationLoop((now) => {
+    if(graphicsRecovery?.active){last=now;return;}
+    if(graphicsClockReset){last=now;graphicsClockReset=false;}
     const workStart=performance.now();const work:Record<string,number>={};let workMark=workStart;const markWork=(name:string)=>{const t=performance.now();work[name]=t-workMark;workMark=t;};
     const elapsed = Math.max(0.001, (now - last) / 1000);
     if(elapsed>.05&&ready)canvas.dataset.lastFrameStall=JSON.stringify({gapMs:elapsed*1000,previousWork,visible:document.visibilityState});
@@ -694,6 +711,8 @@ async function boot(): Promise<void> {
         document.querySelector<HTMLElement>('#app')!.dataset.ready = 'true';
         ui.setLoading(1);
         if(resumeTourOnReady){resumeTourOnReady=false;if(restoredVehicle?.flightMode==='return'){returnToHelipad();ui.toast('已从保存位置继续自动返航，正在重新检查通路。');}else{startCruise();ui.toast('已恢复自动游览，从刚才的航段接着飞；可随时暂停。');}}
+        else if(restoredActiveVehicle==='car'&&car){restoredActiveVehicle=undefined;setCarDriving(true);}
+        else if(restoredActiveVehicle==='helicopter'&&helicopter){restoredActiveVehicle=undefined;setPilot(true);}
         else if(restoredBoat?.piloting){restoredBoat.piloting=false;setBoating(true);}
         else if(restoredBicycle?.riding){restoredBicycle.riding=false;setBicycleRiding(true);}
       }
@@ -814,6 +833,7 @@ async function boot(): Promise<void> {
   });
 
   document.addEventListener('visibilitychange', () => {
+    if(graphicsRecovery?.active){last=performance.now();return;}
     if (document.hidden) {
       if (piloting && !recording&&!helicopter?.suspendForVisibility()) setPilot(false);
       if (driving && !recording) setCarDriving(false);
@@ -827,7 +847,7 @@ async function boot(): Promise<void> {
   });
   window.addEventListener('blur', () => { savePose(); void persistence!.flush().catch(() => undefined); });
   window.addEventListener('beforeunload', (event) => {
-    if (saveState === 'saving') { event.preventDefault(); event.returnValue = ''; }
+    if (saveState === 'saving'||graphicsUnsaved||graphicsRecovery?.active&&graphicsRecovery.state.save!=='saved') { event.preventDefault(); event.returnValue = ''; }
   });
 
   function selectTool(next: Tool): void {
@@ -860,6 +880,7 @@ async function boot(): Promise<void> {
       position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
       rotation: { x: camera.rotation.x, y: camera.rotation.y, z: camera.rotation.z },
       mode: exploration, weather: environment.weather,
+      ...(driving?{activeVehicle:'car' as const}:piloting?{activeVehicle:'helicopter' as const}:{}),
       view: walker?.viewMode ?? restoredView,
       car: car?.snapshot(),
       ...(bicycle?{bicycle:bicycle.snapshot()}:{}),
@@ -1430,11 +1451,7 @@ async function boot(): Promise<void> {
     try {
       persistence.recordFragments(physics!.snapshot());
       const json = await persistence.exportSave();
-      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-      const link = document.createElement('a');
-      link.href = url; link.download = `mirror-coast-${isLab ? 'lab-' : ''}${new Date().toISOString().slice(0, 10)}.json`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      downloadWorldSave(json);
       ui.toast('世界存档已导出');
     } catch (error) { ui.toast(`导出失败：${errorMessage(error)}`, true); }
     finally { changingSave = false; }
@@ -1451,6 +1468,11 @@ async function boot(): Promise<void> {
       location.reload();
     } catch (error) { ui.toast(`导入失败：${errorMessage(error)}。原存档已保留。`, true); }
     finally { changingSave = false; }
+  }
+
+  function downloadWorldSave(json:string):void{
+    const url=URL.createObjectURL(new Blob([json],{type:'application/json'})),link=document.createElement('a');
+    link.href=url;link.download=`mirror-coast-${isLab?'lab-':''}${new Date().toISOString().slice(0,10)}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
   }
 
   async function switchJourney(slot?:string):Promise<void>{

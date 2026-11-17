@@ -387,6 +387,9 @@ export class Environment {
     this.probeDirty = false; this.probeClock = 0;
     this.probeWetness = this.wetness.value;
   }
+
+  /** GPU-only probes and cached shadows have no CPU pixels to re-upload. */
+  restoreGraphics():void{this.sun.shadow.needsUpdate=true;this.refreshProbe();}
 }
 
 /** Low-cost layered overcast sky; night is intentionally readable at street level. */

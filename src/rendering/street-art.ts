@@ -402,13 +402,21 @@ export class StreetArt {
         const h=Math.min(3.72,roof-1-y),anchor=face.cell(Math.max(0,Math.min(face.width-1,Math.floor(u))),y+1);
         if(h>0&&this.world.getVoxel(anchor.x,anchor.y,anchor.z))this.faceBox(face,u,y+h/2,.055,.24,h,.22,y===base?this.slate:this.cream,[anchor]);
       }
+      // A vertical bay on taller apartment blocks counterbalances the long
+      // horizontal window rows. Keep it in an existing masonry gap.
+      if(height>=25&&face.width>=12){
+        const u=Math.min(face.width-1.5,Math.round(face.width/8)*4+.2);
+        for(let y=base+4;y<roof-1;y+=4){const h=Math.min(3.72,roof-1-y),anchor=face.cell(Math.floor(u),y+1);if(h>0&&this.world.getVoxel(anchor.x,anchor.y,anchor.z)&&!glassVoxel(this.world.getVoxel(anchor.x,anchor.y,anchor.z)))this.faceBox(face,u,y+h/2,.045,.38,h,.20,this.cream,[anchor]);}
+      }
     }
     const top=roof+1,cx=(x0+x1+1)/2,cz=(z0+z1+1)/2;
     // Roof additions stay within the existing eaves. Their actual boxes are
     // also their colliders; no invisible rectangular cap over a pitched roof.
     const roofPart=(x:number,z:number,sx:number,sz:number,bottom:number,sy:number,material:MeshStandardMaterial)=>{
       const anchors:Cell[]=[];
-      for(const dx of [-.36,.36])for(const dz of [-.36,.36])anchors.push({x:Math.floor(x+dx*sx),y:roof,z:Math.floor(z+dz*sz)});
+      // The visible roof must not mask a blast through its centre. Bind its
+      // full backing footprint, including on reload, rather than four corners.
+      for(let ax=Math.floor(x-sx/2+.01);ax<=Math.floor(x+sx/2-.01);ax++)for(let az=Math.floor(z-sz/2+.01);az<=Math.floor(z+sz/2-.01);az++)anchors.push({x:ax,y:roof,z:az});
       if(anchors.every(a=>!!this.world.getVoxel(a.x,a.y,a.z)))this.solidCube(x,bottom+sy/2,z,sx,sy,sz,material,anchors,true);
     };
     if(height<25&&index%3!==0){
@@ -496,13 +504,26 @@ export class StreetArt {
     const anchors = [face.cell(Math.floor(u - 1), base + 1), face.cell(Math.min(face.width - 1, Math.floor(u + 1)), base + 2)];
     const width = Math.min(7.4, face.width - 1.3);
     const canopy = this.awningColours[index%3];
-    // Separate shop bays and retractable rain covers give the same voxel masses different identities.
-    this.faceBox(face,u,base+3.35,.8,width,.055,1.55,canopy,anchors,.20);
-    this.faceBox(face,u,base+3.03,1.53,width,.28,.055,canopy,anchors);
-    for(const side of [-1,1])this.faceBox(face,u+side*width*.43,base+3.05,.72,.04,.045,1.40,this.iron,anchors,-.25);
-    if(index%2===0)for(let stripe=-width/2+.25;stripe<width/2;stripe+=.7){
-      this.faceBox(face,u+stripe,base+3.383,.8,.24,.012,1.55,this.cream,anchors,.20);
-      this.faceBox(face,u+stripe,base+3.03,1.562,.24,.28,.012,this.cream,anchors);
+    const frontage=index%3;
+    if(frontage===0){
+      // Cafes/bakeries keep a soft, retractable fabric cover.
+      this.faceBox(face,u,base+3.35,.8,width,.055,1.55,canopy,anchors,.20);
+      this.faceBox(face,u,base+3.03,1.53,width,.28,.055,canopy,anchors);
+      for(const side of [-1,1])this.faceBox(face,u+side*width*.43,base+3.05,.72,.04,.045,1.40,this.iron,anchors,-.25);
+      if(index%2===0)for(let stripe=-width/2+.25;stripe<width/2;stripe+=.7){
+        this.faceBox(face,u+stripe,base+3.383,.8,.24,.012,1.55,this.cream,anchors,.20);
+        this.faceBox(face,u+stripe,base+3.03,1.562,.24,.28,.012,this.cream,anchors);
+      }
+    }else if(frontage===1){
+      // Bookshops/hotels read as masonry portals, rather than another awning.
+      this.faceBox(face,u,base+3.13,.34,width,.20,.70,this.cream,anchors);
+      for(const side of [-1,1])this.faceBox(face,u+side*1.28,base+1.47,.12,.22,2.94,.28,this.cream,anchors);
+      this.faceBox(face,u,base+2.98,.14,2.78,.17,.32,this.cream,anchors);
+    }else{
+      // Workshops have a shallower metal canopy and exposed braces.
+      this.faceBox(face,u,base+3.15,.52,width,.085,1.05,this.slate,anchors,.045);
+      this.faceBox(face,u,base+3.10,1.02,width,.12,.06,this.iron,anchors);
+      for(const side of [-1,1])this.faceBox(face,u+side*width*.42,base+2.98,.50,.055,.055,.95,this.iron,anchors,-.28);
     }
     for (const side of [-1.15, 1.15]) this.faceBox(face, u + side, base + 1.46, .1, .1, 2.9, .19, this.iron, anchors);
     this.faceBox(face, u, base + 2.94, .1, 2.4, .1, .2, this.iron, anchors);

@@ -97,6 +97,7 @@ button:disabled { opacity: .45; cursor: default; }
 .mc-startup-card details{margin-top:20px;border-top:1px solid #bac7ad33;padding-top:12px;}.mc-startup-card summary{font-size:12px;color:#b9cabd;cursor:pointer;}.mc-startup-card textarea{display:block;width:100%;height:125px;resize:vertical;margin-top:12px;padding:10px;border:1px solid #9db7aa55;border-radius:4px;background:#0e2527;color:#c8d4c8;font:11px/1.65 monospace;}
 @media(max-width:520px){.mc-startup-error{padding:20px 18px;}.mc-startup-card header{display:block;margin-bottom:28px;}.mc-startup-card header small{display:block;margin-top:7px;}.mc-startup-actions button{flex:1;padding:10px 12px;}}
 
+.mc-graphics-recovery .mc-startup-card header b{letter-spacing:.18em;font-size:17px;}.mc-graphics-recovery [data-gpu-status]{font-size:13px;color:#cfdbc7;}.mc-recovery-secondary{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;}.mc-recovery-secondary button{border:1px solid #bac7ad44;border-radius:4px;padding:8px 13px;background:transparent;color:#cbd8ca;font-size:12px;}.mc-graphics-recovery[data-save-state="error"] .mc-startup-save{border-color:#dcad7a;}.mc-graphics-recovery details p{font-size:12px;color:#b9c8bf;}
 .mc-ui { position: fixed; z-index: 10; inset: 0; pointer-events: none; user-select: none; }
 .mc-ui button, .mc-ui a, .mc-ui input, .mc-ui details, .mc-ui .mc-panel { pointer-events: auto; }
 .mc-ui select { pointer-events: auto; font: inherit; }

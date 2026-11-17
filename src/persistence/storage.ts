@@ -26,6 +26,7 @@ export type PlayerState = {
   position: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
   mode?: 'fly' | 'walk';
+  activeVehicle?:'car'|'helicopter';
   weather?: 'clear' | 'rain';
   view?: 'first' | 'third';
   car?: CarState;
@@ -123,6 +124,7 @@ function validatePlayer(value: unknown): PlayerState {
     result.car = { position,heading,speed };
     if(value.car.rigidBody!==undefined){const motion=validateRigidMotion({...isRecord(value.car.rigidBody)?value.car.rigidBody:{},position});result.car.rigidBody={rotation:motion.rotation,linearVelocity:motion.linearVelocity,angularVelocity:motion.angularVelocity};}
   }
+  if(value.activeVehicle!==undefined){if(value.activeVehicle!=='car'&&value.activeVehicle!=='helicopter')throw new Error('载具接管状态无效。');result.activeVehicle=value.activeVehicle;}
   if(value.bicycle!==undefined){if(!isRecord(value.bicycle))throw new Error('自行车存档格式无效。');const position=validateVector(value.bicycle.position),heading=value.bicycle.heading,riding=value.bicycle.riding;if(Object.values(position).some(v=>Math.abs(v)>4096)||typeof heading!=='number'||!Number.isFinite(heading)||Math.abs(heading)>100||typeof riding!=='boolean')throw new Error('自行车存档姿态无效。');result.bicycle={position,heading,riding};}
   if(value.boat!==undefined){if(!isRecord(value.boat))throw new Error('小艇存档格式无效。');const position=validateVector(value.boat.position),heading=value.boat.heading,piloting=value.boat.piloting,grounded=value.boat.grounded;if(Object.values(position).some(v=>Math.abs(v)>4096)||typeof heading!=='number'||!Number.isFinite(heading)||Math.abs(heading)>100||typeof piloting!=='boolean'||grounded!==undefined&&typeof grounded!=='boolean')throw new Error('小艇存档姿态无效。');result.boat={position,heading,piloting,...grounded===undefined?{}:{grounded}};}
   if(value.props!==undefined){
@@ -459,6 +461,14 @@ export class WorldPersistence {
     }
     // Compact output keeps even the bounded maximum world re-importable within
     // the 32 MiB limit; pretty-printed voxel tuples can exceed that same limit.
+    return JSON.stringify(this.snapshot());
+  }
+
+  /** Emergency backup must remain possible while a browser write is blocked.
+   * Never present an unread existing save as a complete recovered world. */
+  exportMemorySave():string{
+    this.assertOpen();
+    if(this.readBlocked)throw new Error(READ_BLOCKED_MESSAGE);
     return JSON.stringify(this.snapshot());
   }
 
