@@ -8,7 +8,9 @@
 
 > 当前为持续开发的单机原型。地图是程序生成的虚构沿海区域，约 1024 × 768 米；本项目不声称重建真实地球或接入实时地理／天气数据。推荐使用有硬件加速的桌面浏览器、键盘和鼠标。
 
-![海堤看海与渔港实机画面](docs/demo/harbor.jpg)
+![GitHub Pages 上线版本：码头与旧城](docs/demo/online-overview.jpg)
+
+2026-11-17 已上线。远端干净安装、100 个测试文件／649 项测试与生产构建通过；独立浏览器实际步行和刷新后位置恢复通过。[发布验证记录](docs/DEPLOYMENT.md#本次发布验证)
 
 ## 演示
 
@@ -16,6 +18,8 @@
 
 | 场景 | 画面 |
 | --- | --- |
+| 上线版本：旧城步行 | ![远端实际步行](docs/demo/online-walking.jpg) |
+| 海堤坐下看海 | ![海堤与渔港](docs/demo/harbor.jpg) |
 | 旧城街道与沿海道路 | ![旧城驾驶](docs/demo/coastal-drive.jpg) |
 | 南湾：风筝、潮池与救援船 | ![南湾探索](docs/demo/south-bay.jpg) |
 | 西岬：调试航标，观察海上回应 | ![西岬航标](docs/demo/cape-signal.jpg) |
