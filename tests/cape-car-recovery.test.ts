@@ -1,0 +1,27 @@
+import {afterEach,beforeAll,expect,it} from 'vitest';
+import {MeshStandardMaterial,PerspectiveCamera,Scene} from 'three';
+import {CoastalCar,type CarState} from '../src/vehicles/coastal-car';
+import {CollapsePhysics} from '../src/destruction/physics';
+import {generateWorld} from '../src/world/generate';
+import {addHarborQuarter} from '../src/world/harbor-quarter';
+import {addRegionalTerrain} from '../src/world/region-terrain';
+import {addRegionalDistricts} from '../src/world/region-districts';
+import {WalkTransitions} from '../src/rendering/walk-transitions';
+import type {VoxelWorld} from '../src/world/voxel';
+let world:VoxelWorld,transitions:WalkTransitions;
+const clean:Array<()=>void>=[];afterEach(()=>clean.splice(0).reverse().forEach(f=>f()));
+beforeAll(()=>{const g=generateWorld();world=g.world;addHarborQuarter(world,g.buildings);addRegionalTerrain(world);addRegionalDistricts(world,g.buildings);transitions=new WalkTransitions(new Scene(),world);});
+const stuck:CarState={position:{x:-92.6576,y:23.4916,z:134.42256},heading:1.14237,speed:0,rigidBody:{rotation:{x:.0992174,y:.5367238,z:-.0610439,w:.8356776},linearVelocity:{x:0,y:0,z:0},angularVelocity:{x:0,y:0,z:0}}};
+it('resumes a settled save on the actual west-cape incline without road rescue',async()=>{
+ const scene=new Scene(),material=new MeshStandardMaterial(),camera=new PerspectiveCamera();
+ const physics=await CollapsePhysics.create(scene,material,{onStateChange:()=>{}}),car=CoastalCar.create(scene,physics,world,{onNotice:()=>{}});clean.push(()=>material.dispose(),()=>physics.dispose(),()=>car.dispose());
+ car.setSurfaceProvider((x,z,max)=>transitions.heightAt(x,z,max));car.setObstacleProvider(()=>transitions.nearby(car.position));car.restore(stuck);car.setDriving(true);
+ const simulate=(s:number)=>{for(let i=0;i<s*60;i++){car.beforePhysics(1/60);physics.update(1/60);car.afterPhysics(1/60,camera);}};
+ simulate(2);
+ expect(car.viewState.recovering,JSON.stringify(car.snapshot())).toBe(false);
+ const start=car.position.clone();car.setInput({throttle:.65});simulate(3);
+ expect(car.position.x,JSON.stringify(car.snapshot())).toBeLessThan(start.x-9);
+ expect(car.viewState.overturned).toBe(false);
+ car.setInput({brake:true});simulate(1);const top=car.position.clone();car.setInput({throttle:-.7});simulate(2);
+ expect(car.position.x,JSON.stringify(car.snapshot())).toBeGreaterThan(top.x+2);
+});

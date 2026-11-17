@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.vite/
+.vercel/
+.env
+.env.*
+!.env.example
+*.local
+*.log
+artifacts/
+playwright-report/
+test-results/
+*.save.json
+

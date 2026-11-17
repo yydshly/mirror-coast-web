@@ -1,0 +1,24 @@
+import {describe,it,expect} from 'vitest';
+import {Scene,Group,Vector3} from 'three';
+import {PlayerAvatar} from '../src/rendering/player-avatar';
+import {Bicycle} from '../src/vehicles/bicycle';
+import {VoxelWorld} from '../src/world/voxel';
+import {generateWorld} from '../src/world/generate';
+import {addHarborQuarter} from '../src/world/harbor-quarter';
+import {BuildingEntrances} from '../src/rendering/building-entrances';
+import {helicopterExit,helipadClear} from '../src/vehicles/helicopter-access';
+import {HELICOPTER_SPAWN} from '../src/route/coast-route';
+
+function road(){const world=new VoxelWorld();for(let x=100;x<180;x++)for(let z=150;z<190;z++)world.setVoxel(x,15,z,1,false);return world;}
+describe('bicycle road riding and actual access',()=>{
+ it('rides the authored 20cm road treads without treating their risers as a full-height wall',()=>{const b=new Bicycle(new Scene(),road());const steps=Array.from({length:16},(_,i)=>({minX:120+i*.8,maxX:120+(i+1)*.8,minY:16,maxY:16+(i+1)*.2,minZ:166,maxZ:173,standable:true}));b.setObstacleProvider(()=>steps);b.setRiding(true);b.setInput(1);for(let i=0;i<300;i++)b.update(1/60);expect(b.position.x,JSON.stringify(b.viewState)).toBeGreaterThan(124);expect(b.position.y).toBeGreaterThan(17);b.dispose();});
+ it('keeps the palms at the actual handlebar height when the rider rises onto the saddle',()=>{const avatar=new PlayerAvatar();for(const speed of [0,4,8])for(const phase of [0,Math.PI/2,Math.PI]){avatar.cyclePose(1/60,phase,speed);avatar.root.updateMatrixWorld(true);const elbow=avatar.root.getObjectByName('explorer-left-elbow')!,hand=elbow.children.find(c=>c instanceof Group)!;const p=hand.localToWorld(new Vector3(0,-.054,-.009));expect(Math.abs(p.y-1.25)).toBeLessThan(.025);expect(Math.abs(p.z+.52)).toBeLessThan(.035);}avatar.dispose();});
+ it('gathers nearby scene obstacles once per rendered update, rather than once per wheel/body sample',()=>{const b=new Bicycle(new Scene(),road());let queries=0;b.setObstacleProvider(()=>{queries++;return[];});b.setRiding(true);b.setInput(1);for(let i=0;i<60;i++)b.update(1/60);expect(queries).toBeLessThanOrEqual(61);b.dispose();});
+ it('accelerates, steers only while moving, brakes, and leaves clear dismount space',()=>{const w=road(),b=new Bicycle(new Scene(),w),p=b.position.clone();b.setRiding(true);b.setInput(0,1);for(let i=0;i<30;i++)b.update(1/60);expect(b.snapshot().heading).toBeCloseTo(-Math.PI/2,5);b.setInput(1);for(let i=0;i<180;i++)b.update(1/60);expect(b.position.x-p.x).toBeGreaterThan(12);expect(b.position.y).toBeCloseTo(16,3);expect(b.viewState.speed).toBeGreaterThan(8);b.setInput(0,0,true);for(let i=0;i<90;i++)b.update(1/60);expect(b.viewState.speed).toBeLessThan(.01);expect(b.exitPosition(p=>b.motor.canOccupy(p))).not.toBeNull();b.dispose();});
+ it('stops its full length at a thin post and can back out',()=>{const w=road(),b=new Bicycle(new Scene(),w);b.setObstacleProvider(()=>[{minX:124,maxX:124.06,minY:16,maxY:18,minZ:169.5,maxZ:170.1}]);b.setRiding(true);b.setInput(1);for(let i=0;i<240;i++)b.update(1/60);expect(b.position.x).toBeLessThan(123.1);expect(b.viewState.blocked).toContain('受阻');const x=b.position.x;b.setInput(-1);for(let i=0;i<90;i++)b.update(1/60);expect(b.position.x).toBeLessThan(x-.5);b.dispose();});
+ it('does not cycle over a one-metre step or an ungrounded edge',()=>{for(const cliff of [false,true]){const w=road();for(let x=124;x<180;x++)for(let z=150;z<190;z++)w.setVoxel(x,cliff?15:16,z,cliff?0:1,false);const b=new Bicycle(new Scene(),w);b.setRiding(true);b.setInput(1);for(let i=0;i<240;i++)b.update(1/60);expect(b.position.x).toBeLessThan(123.4);expect(b.position.y).toBeCloseTo(16,2);expect(b.viewState.blocked).not.toBe('');b.dispose();}});
+});
+describe('real entrances and helicopter access',()=>{
+ it('finds a grounded side exit and rejects an airborne pose or broken pad',()=>{const {world}=generateWorld();expect(helipadClear(world,[])).toBe(true);expect(helicopterExit(world,HELICOPTER_SPAWN,0,()=>true)?.y).toBe(15);expect(helicopterExit(world,{...HELICOPTER_SPAWN,y:40},0,()=>true)).toBeNull();world.setVoxel(108,14,209,0);expect(helipadClear(world,[])).toBe(false);});
+ it('adds visible city doors while leaving the harbor opening free and hides destroyed door attachments',()=>{const {world,buildings}=generateWorld();addHarborQuarter(world,buildings);const doors=new BuildingEntrances(new Scene(),world,buildings);expect(doors.diagnostics.closed).toBeGreaterThan(15);expect(doors.diagnostics.open).toBe(6);expect(doors.obstacles.some(b=>b.minX<17&&b.maxX>17&&b.minZ<228.3&&b.maxZ>228&&b.minY<17.8&&b.maxY>16.1)).toBe(false);const before=doors.obstacles.length;const b=buildings.all.find(b=>b.id.startsWith('city-building-'))!,x=Math.floor((b.bounds.minX+b.bounds.maxX)/2)+1;world.setVoxel(x,b.foundationY+1,b.bounds.maxZ-1,0);doors.sync();expect(doors.obstacles.length).toBeLessThan(before);doors.dispose();});
+});
