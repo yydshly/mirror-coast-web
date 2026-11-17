@@ -20,6 +20,7 @@ import type {SeatTarget} from '../input/ground-actions';
 import {surfacePatches} from './surface-patches';
 import {createTrafficBody,createTrafficInterior,createTrafficSteeringWheel,TRAFFIC_CABIN_RIG} from '../vehicles/traffic-interior';
 import {ChunkDependents} from '../world/chunk-dependents';
+import type {CityMassing,MassingSection} from '../world/city-massing';
 
 type Cell = { x: number; y: number; z: number };
 type Supported = { anchors: Cell[] };
@@ -140,7 +141,7 @@ export class StreetArt {
   private readonly vehicleControls=this.material('#293c40',.8);
   private readonly vehicleInteriorMaterials:MeshStandardMaterial[]=[];
 
-  constructor(scene: Scene, private world: VoxelWorld, buildings: BuildingRegistry,private options:{people?:boolean;parkedStates?:readonly TrafficBodyState[]}={}) {
+  constructor(scene: Scene, private world: VoxelWorld, buildings: BuildingRegistry,private options:{people?:boolean;parkedStates?:readonly TrafficBodyState[];massing?:ReadonlyMap<string,CityMassing>}={}) {
     this.root.name = 'street-life-and-architectural-character';
     [this.tyreGeometry,this.hubGeometry,this.cabinGeometry,this.windscreenGeometry,this.binGeometry,this.binLidGeometry,this.bagGeometry].forEach(g=>this.geometries.add(g));
     [this.vehiclePane,this.vehicleSidePane,this.parkedBody,this.parkedWheel,...this.parkedInterior.map(p=>p.geometry)].forEach(g=>this.geometries.add(g));
@@ -328,11 +329,21 @@ export class StreetArt {
   }
 
   private building(building: BuildingRecord, index: number): void {
+    const massing=this.options.massing?.get(building.id);
+    if(!massing){this.buildingVolume(building,index);return;}
+    for(const [i,section] of massing.sections.entries()){
+      const {x0,x1,z0,z1,base,height}=section;
+      this.buildingVolume({...building,foundationY:base,bounds:{minX:x0-1,maxX:x1+1,minZ:z0-1,maxZ:z1+1,minY:base,maxY:base+height+1}},index+i*2,section);
+    }
+  }
+
+  private buildingVolume(building: BuildingRecord, index: number,section?:MassingSection): void {
     const base = building.foundationY;
+    const frontage=!section||section.groundFloor;
     const style = index % 5;
     const frames = style === 0 || style === 3 ? this.iron : style === 1 ? this.timber : this.cream;
     const faces = this.faces(building);
-    this.architecturalEnvelope(building,faces,index);
+    this.architecturalEnvelope(building,faces,index,section?base+section.height+1:undefined,!section);
     for (let side = 0; side < faces.length; side++) {
       const face = faces[side];
       for (let y = base + 1; y <= building.bounds.maxY - 2; y += 4) {
@@ -340,7 +351,7 @@ export class StreetArt {
           const a = face.cell(u, y), b = face.cell(u + 1, y + 1);
           if (!glassVoxel(this.world.getVoxel(a.x, a.y, a.z)) || !glassVoxel(this.world.getVoxel(b.x, b.y, b.z))) continue;
           const anchors = [a, b], center = u + 1;
-          if(side===0&&y===base+1&&Math.abs(center-face.width/2)<2.1){u++;continue;}
+          if(frontage&&side===0&&y===base+1&&Math.abs(center-face.width/2)<2.1){u++;continue;}
           for (const offset of [-1.02, 1.02]) {
             this.faceBox(face, center + offset, y + 1, .075, .065, 2.13, .13, frames, anchors);
             this.faceBox(face, center, y + 1 + offset, .075, 2.13, .065, .13, frames, anchors);
@@ -357,31 +368,33 @@ export class StreetArt {
             }
           }
           if (side === (index % 3) && style === 2 && y > base + 1 && (Math.floor(y / 4) + u) % 3 === 0) this.balcony(face, center, y, anchors);
-          if (side === 0 && y === base + 1 && face.width > 12&&Math.abs(center-face.width/2)>2.1) this.windowDisplay(face, center, y, index, anchors);
+          if (frontage&&side === 0 && y === base + 1 && face.width > 12&&Math.abs(center-face.width/2)>2.1) this.windowDisplay(face, center, y, index, anchors);
           u += 1;
         }
       }
     }
-    if (building.bounds.minZ > 170) this.warehouse(building, faces[1]);
-    else this.shop(building, faces[0], index);
-    // The central north/south street has active shop fronts on both sides.
-    if (building.bounds.minZ > 40 && building.bounds.minZ < 120) {
-      if (building.bounds.maxX >= 119 && building.bounds.maxX <= 122) this.shop(building, faces[2], index + 3);
-      if (building.bounds.minX >= 139 && building.bounds.minX <= 142) this.shop(building, faces[3], index + 5);
+    if (frontage) {
+      if (building.bounds.minZ > 170) this.warehouse(building, faces[1]);
+      else this.shop(building, faces[0], index);
+      // The central north/south street has active shop fronts on both sides.
+      if (building.bounds.minZ > 40 && building.bounds.minZ < 120) {
+        if (building.bounds.maxX >= 119 && building.bounds.maxX <= 122) this.shop(building, faces[2], index + 3);
+        if (building.bounds.minX >= 139 && building.bounds.minX <= 142) this.shop(building, faces[3], index + 5);
+      }
     }
-    if (index % 3 === 0) this.fireEscape(building, faces[3]);
-    this.rooftop(building, index);
+    if (!section&&index % 3 === 0) this.fireEscape(building, faces[3]);
+    if(!section)this.rooftop(building, index);
   }
 
   /** Broad architectural hierarchy before small fittings: a grounded base,
    * slender floor lines and a roof silhouette selected for the building scale.
    * Parts reuse the existing instanced batches, collision and support system. */
-  private architecturalEnvelope(building:BuildingRecord,faces:Face[],index:number):void{
+  private architecturalEnvelope(building:BuildingRecord,faces:Face[],index:number,roofOverride?:number,decorateRoof=true):void{
     const b=building.bounds,base=building.foundationY,x0=b.minX+1,x1=b.maxX-1,z0=b.minZ+1,z1=b.maxZ-1;
     const width=x1-x0+1,depth=z1-z0+1,px=x0+1,pz=z0+1;
-    let roof=b.maxY;
-    while(roof>base){const m=this.world.getVoxel(px,roof,pz);if(m===Material.Roof||m===Material.Terracotta)break;roof--;}
-    if(roof<=base+4)return;
+    let roof=roofOverride??b.maxY;
+    if(roofOverride===undefined)while(roof>base){const m=this.world.getVoxel(px,roof,pz);if(m===Material.Roof||m===Material.Terracotta)break;roof--;}
+    if(roof<=base+2)return;
     const height=roof-base;
     for(const face of faces){
       const wall=[0,Math.floor(face.width/2),face.width-1].map(u=>face.cell(u,base)).map(a=>this.world.getVoxel(a.x,a.y,a.z)).find(m=>m===Material.Cream||m===Material.Blue||m===Material.Mint);
@@ -409,6 +422,7 @@ export class StreetArt {
         for(let y=base+4;y<roof-1;y+=4){const h=Math.min(3.72,roof-1-y),anchor=face.cell(Math.floor(u),y+1);if(h>0&&this.world.getVoxel(anchor.x,anchor.y,anchor.z)&&!glassVoxel(this.world.getVoxel(anchor.x,anchor.y,anchor.z)))this.faceBox(face,u,y+h/2,.045,.38,h,.20,this.cream,[anchor]);}
       }
     }
+    if(!decorateRoof)return;
     const top=roof+1,cx=(x0+x1+1)/2,cz=(z0+z1+1)/2;
     // Roof additions stay within the existing eaves. Their actual boxes are
     // also their colliders; no invisible rectangular cap over a pitched roof.

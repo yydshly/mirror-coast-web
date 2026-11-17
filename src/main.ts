@@ -10,6 +10,7 @@ import {
   PCFShadowMap, PerspectiveCamera, Scene, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { generateWorld } from './world/generate';
+import {applyCityMassing} from './world/city-massing';
 import { CHUNK_SIZE, WORLD_SEED, WORLD_VERSION } from './world/voxel';
 import { MeshQueue } from './world/mesh-queue';
 import { WorldPersistence, type PlayerState } from './persistence/storage';
@@ -273,6 +274,7 @@ async function boot(): Promise<void> {
     addSouthBayLandmarks(world,buildings);
     addOuterLandmarks(world,buildings);
   }
+  const cityMassing=dressed?applyCityMassing(world,buildings):undefined;
   registerNaturalTrees(world,buildings);
   buildings.captureFoundations(world);
   camera.position.set(spawn.x, spawn.y, spawn.z);
@@ -339,7 +341,7 @@ async function boot(): Promise<void> {
   environment.setTerrain(world);
   const decorWorld=new Proxy(world,{get(target,key){if(key==='getVoxel')return(x:number,y:number,z:number)=>generatingDecor?(originalCells.get(`${x},${y},${z}`)??target.getVoxel(x,y,z)):target.getVoxel(x,y,z);const v=Reflect.get(target,key);return typeof v==='function'?v.bind(target):v;}});
   const coastalArt = !dressed ? undefined : new CoastalArt(scene, decorWorld, buildings, { facades: false, headlands: false });
-  const streetArt = !dressed ? undefined : new StreetArt(scene, decorWorld, buildings,{people:false,parkedStates:restoredTraffic});
+  const streetArt = !dressed ? undefined : new StreetArt(scene, decorWorld, buildings,{people:false,parkedStates:restoredTraffic,massing:cityMassing});
   const regionArt = !dressed ? undefined : new RegionArt(scene, decorWorld);
   const neighborhood=!dressed?undefined:new NeighborhoodDetail(scene,decorWorld,buildings);
   const entrances=!dressed?undefined:new BuildingEntrances(scene,world,buildings);
