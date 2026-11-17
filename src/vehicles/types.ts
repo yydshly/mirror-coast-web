@@ -28,4 +28,5 @@ export type HelicopterViewState = {
   flightMode?:'tour'|'return';
   returnPhase?:ReturnPhase;
   returnAltitude?:number;
+  recoverySuggested?:boolean;
 };

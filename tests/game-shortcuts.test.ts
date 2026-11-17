@@ -10,6 +10,13 @@ function setup(overrides:Partial<GameShortcutState>={}){
   return {state,actions,target,press};
 }
 describe('game interaction and overlay shortcut routing',()=>{
+  it.each([{cycling:true},{piloting:true},{driving:true}])('offers G recovery in each vehicle and leaves H as return flight',mode=>{
+    const {actions,state,press}=setup({...mode,walking:false});actions.recoverVehicle=vi.fn();actions.returnToPad=vi.fn();
+    expect(press('KeyG').defaultPrevented).toBe(true);expect(actions.recoverVehicle).toHaveBeenCalledOnce();
+    press('KeyG',true);expect(actions.recoverVehicle).toHaveBeenCalledOnce();
+    press('KeyH');expect(actions.returnToPad).toHaveBeenCalledOnce();
+    state.helpOpen=true;press('KeyG');expect(actions.recoverVehicle).toHaveBeenCalledOnce();
+  });
   it('keeps gameplay keys out of the open options menu and closes it with Escape without changing modes',()=>{const {actions,press,target}=setup({menuOpen:true,cycling:true});actions.closeMenu=vi.fn();const downstream=vi.fn();target.addEventListener('keydown',downstream);for(const key of ['KeyW','KeyF','KeyV','Space'])expect(press(key).defaultPrevented).toBe(true);expect(downstream).not.toHaveBeenCalled();press('Escape');expect(actions.closeMenu).toHaveBeenCalledOnce();expect(actions.escape).not.toHaveBeenCalled();expect(actions.togglePilot).not.toHaveBeenCalled();});
   it('routes bicycle dismount and helipad return before any vehicle movement listener',()=>{const {actions,press}=setup({walking:false,cycling:true});actions.exitVehicle=vi.fn();actions.returnToPad=vi.fn();expect(press('KeyE').defaultPrevented).toBe(true);expect(actions.exitVehicle).toHaveBeenCalledOnce();press('KeyF');expect(actions.exitVehicle).toHaveBeenCalledTimes(2);press('KeyH');expect(actions.returnToPad).toHaveBeenCalledOnce();});
   it('handles recording globally without passing F9 into the game, and limits presentation toggling to unobstructed play',()=>{

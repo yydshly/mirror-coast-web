@@ -8,6 +8,7 @@ import {bicycleModel} from './bicycle-model';
 import {BICYCLE_RIG as R} from './bicycle-rig';
 import{bicycleWallCorrection}from'./bicycle-wall-contact';
 import type {Vec3} from '../destruction/types';
+import {findLocalRecovery,VehicleStallWatch} from './recovery';
 
 export const BICYCLE_SPAWN={x:114,y:16,z:169.8};
 export type BicycleState={position:Vec3;heading:number;riding:boolean};
@@ -20,6 +21,8 @@ export class Bicycle{
   private phase=0;private phaseRate=0;private wheelAngle=0;private backingDistance=0;
   private footDown=1;private mountRemaining=0;private stopRequested=false;private pedaling=false;
   private driveHeld=false;
+  private readonly stall=new VehicleStallWatch();
+  private recoveryProvider:(()=>readonly SceneObstacle[])|undefined;
   private blocked='';private input:{throttle:number;steer:number;brake:boolean}|undefined;
   private provider:()=>readonly SceneObstacle[]=()=>[];private nearby:readonly SceneObstacle[]=[];
   private motorNearby:readonly SceneObstacle[]=[];
@@ -44,7 +47,7 @@ export class Bicycle{
   }
   get position(){return this.motor.position;}
   get viewState():BicycleViewState{
-    const notice=this.blocked||(this.stopRequested?'正在刹车，停稳后下车…':this.mountRemaining>0?'收起脚撑、脚回到踏板后出发…':'');
+    const notice=this.stall.stuck?'持续受阻 · 按 G 挪到附近安全地面':this.blocked||(this.stopRequested?'正在刹车，停稳后下车…':this.mountRemaining>0?'收起脚撑、脚回到踏板后出发…':'');
     return {riding:this.riding,speed:this.speed,blocked:notice,grounded:this.motor.grounded,pedaling:this.pedaling,standDeployed:this.model.standDeployed,phase:this.phase,wheelAngle:this.wheelAngle,footDown:this.footDown,stopping:this.stopRequested};
   }
   get orbitState(){return this.orbit.state;}
@@ -56,6 +59,37 @@ export class Bicycle{
   }
   requestDismount(){this.stopRequested=true;this.keys.clear();this.input=undefined;}
   setObstacleProvider(p:()=>readonly SceneObstacle[]){this.provider=p;this.nearby=p();this.motorNearby=this.nearby.filter(b=>b.pedestrianId===undefined);}
+  setRecoveryObstacleProvider(p:()=>readonly SceneObstacle[]){this.recoveryProvider=p;}
+  /** Validate both tyres and the whole bicycle/rider, including overhead props.
+   * Recovery can rotate the bike into an opening; it never edits its obstacles. */
+  recoverNearby():boolean{
+    const previous=this.nearby,previousMotor=this.motorNearby;
+    this.nearby=this.recoveryProvider?.()??this.provider();this.motorNearby=this.nearby;
+    const origin=this.position.clone(),bounds=this.world.bounds;
+    const result=findLocalRecovery(origin,this.heading,p=>{
+      if(p.x<bounds.minX+1.2||p.x>bounds.maxX-1.2||p.z<bounds.minZ+1.2||p.z>bounds.maxZ-1.2)return null;
+      const y=this.floorAt(p.x,p.z);if(y===null||y<=12)return null;
+      for(const heading of [this.heading,this.heading+Math.PI/2,this.heading-Math.PI/2]){
+        const candidate={x:p.x,y,z:p.z},support=this.wheelSupport(candidate,heading);
+        if(!support||Math.abs(support.pitch)>.2)continue;candidate.y=support.y;
+        if(!this.motor.canOccupy(candidate))continue;
+        const body=orientedCollisionBounds({x:p.x,y:support.y+1.2,z:p.z},
+          new Quaternion().setFromEuler(new Euler(support.pitch,heading,0,'YXZ')),{x:.4,y:1.16,z:1.1});
+        if(this.nearby.some(b=>obstaclesIntersect(body,b)))continue;
+        let clear=true;
+        for(let iy=Math.floor(body.minY);iy<=Math.floor(body.maxY)&&clear;iy++)for(let iz=Math.floor(body.minZ);iz<=Math.floor(body.maxZ)&&clear;iz++)for(let ix=Math.floor(body.minX);ix<=Math.floor(body.maxX);ix++){
+          if(this.world.getVoxel(ix,iy,iz)&&obstaclesIntersect(body,{minX:ix,maxX:ix+1,minY:iy,maxY:iy+1,minZ:iz,maxZ:iz+1})){clear=false;break;}
+        }
+        if(clear)return{position:candidate,heading};
+      }return null;
+    });
+    if(result){
+      this.releaseControls();this.motor.stop();this.position.copy(result.position);this.heading=result.heading;this.steer=0;this.mountRemaining=0;this.footDown=1;
+      this.motor.grounded=true;this.blocked='';this.stall.reset();this.ready=false;this.render(0);
+    }
+    this.nearby=previous;this.motorNearby=previousMotor;
+    return !!result;
+  }
   setRiding(active:boolean){
     this.riding=active;this.releaseControls();this.footDown=1;this.mountRemaining=active?.45:0;
     this.orbit.setEnabled(active);this.ready=false;this.render(0);
@@ -75,6 +109,8 @@ export class Bicycle{
   update(dt:number,camera?:PerspectiveCamera){
     this.nearby=this.provider();this.motorNearby=this.nearby.filter(b=>b.pedestrianId===undefined);const duration=Math.max(0,Math.min(.05,dt)),steps=Math.max(1,Math.ceil(duration*120));
     for(let i=0;i<steps;i++)this.step(duration/steps);
+    const input=this.input;
+    this.stall.update(duration,this.position,this.riding&&!this.stopRequested&&(input?Math.abs(input.throttle)>.1&&!input.brake:this.keys.has('KeyW')||this.keys.has('KeyS')),!!this.blocked);
     this.render(duration);this.orbit.update(duration,this.speed);if(this.riding&&camera)this.camera(duration,camera);
   }
   private settleLegs(dt:number,down:boolean,rate:number){

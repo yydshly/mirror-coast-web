@@ -143,6 +143,7 @@ async function boot(): Promise<void> {
   let restoredBay:BayState|undefined;let lastBayNotes='';
   let restoredCoast:CoastOutingSave|undefined;
   let signalConsole:SignalConsole|undefined;let inspectionPose:{position:Vector3;rotation:import('three').Quaternion;fov:number}|undefined;
+  let lastVehicleRecovery=-Infinity;
 
   const ui = new Interface(root, {
     onTool: selectTool,
@@ -177,11 +178,8 @@ async function boot(): Promise<void> {
     onDrive: () => setCarDriving(true),
     onExitDrive: () => setCarDriving(false, true),
     onResetLook:()=>{if(cycling)bicycle?.resetLook();else if(driving)car?.resetLook();else if(piloting)helicopter?.resetLook();canvas.focus();},
-    onRecoverCar:()=>{
-      if(!ready||!driving||!car)return;
-      const recovered=car.recoverToRoad();ui.toast(recovered?'汽车已救援至附近公路。':'附近没有足够安全的路面，汽车保持原位。',!recovered);
-      ui.setCarState(car.viewState);canvas.focus();savePose();
-    },
+    onRecoverCar:recoverCurrentVehicle,
+    onRecoverVehicle:recoverCurrentVehicle,
     onClearTraffic:()=>{void clearNearbyTraffic();},
     onAutopilot: toggleCruise,
     onStartTour: startCruise,
@@ -514,7 +512,7 @@ async function boot(): Promise<void> {
   }
   ui.setExploration(exploration === 'walk', currentPlace);
   ui.setWalkView(walker.viewMode);
-  if(dressed&&!isYard){bicycle=new Bicycle(scene,world,canvas,()=>!ui.isHelpOpen&&!ui.isMenuOpen&&!fieldbook?.isOpen&&!signalConsole?.isOpen);bicycle.setObstacleProvider(()=>[...nearbyScene(bicycle!.position,16,8,true,false),...walkTransitions?.nearby(bicycle!.position)??[]]);if(restoredBicycle)bicycle.restore(restoredBicycle);ui.setBicycleState(bicycle.viewState);}
+  if(dressed&&!isYard){bicycle=new Bicycle(scene,world,canvas,()=>!ui.isHelpOpen&&!ui.isMenuOpen&&!fieldbook?.isOpen&&!signalConsole?.isOpen);bicycle.setObstacleProvider(()=>[...nearbyScene(bicycle!.position,16,8,true,false),...walkTransitions?.nearby(bicycle!.position)??[]]);bicycle.setRecoveryObstacleProvider(()=>[...nearbyScene(bicycle!.position,24,8,true,false),...walkTransitions?.nearby(bicycle!.position)??[]]);if(restoredBicycle)bicycle.restore(restoredBicycle);ui.setBicycleState(bicycle.viewState);}
 
   if(isYard){
     root.classList.add('is-response-yard');
@@ -544,6 +542,7 @@ async function boot(): Promise<void> {
       escape:()=>{if(cycling)setBicycleRiding(false);else if(piloting){if(helicopter?.viewState.grounded)exitHelicopter();else{setPilot(false);ui.toast('已悬停并释放驾驶；落地后按 F 下机，H 自动返航降落。');}}else if(driving)setCarDriving(false,true);else{controller?.stop();walker?.stop();}},
       togglePilot:()=>{if(piloting)exitHelicopter();else setPilot(true);},home,toggleMap:()=>ui.toggleMap(),interact:interactNearby,
       returnToPad:returnToHelipad,exitVehicle:()=>{if(cycling)setBicycleRiding(false);else if(piloting)exitHelicopter();else if(driving)setCarDriving(false,true);},
+      recoverVehicle:recoverCurrentVehicle,
       record:recordAction,presentation:()=>ui.togglePresentation(),
       closeMenu:()=>{ui.closeMenu();canvas.focus();},
     });
@@ -942,6 +941,16 @@ async function boot(): Promise<void> {
       ui.toast(`已清理附近 ${count} 辆事故车${result.resumed?`，${result.resumed} 辆已在其他街区恢复行驶`:'，道路占用已解除'}。${ids.size<nearby.length?'脚下车辆暂时保留，请先走到地面。':''}世界变化已保存；受损道路仍需处理。`);
     }catch(error){ui.toast(`清障状态未能完整保存：${errorMessage(error)}。请先导出当前存档。`,true);}
     finally{ui.setTrafficClearanceBusy(false);clearingTraffic=false;canvas.focus();}
+  }
+
+  function recoverCurrentVehicle():void{
+    if(!ready||changingSave||reloading||(!cycling&&!driving&&!piloting)||performance.now()-lastVehicleRecovery<1000)return;
+    lastVehicleRecovery=performance.now();
+    const recovered=cycling?bicycle?.recoverNearby():driving?car?.recoverToRoad():helicopter?.recoverNearby();
+    if(bicycle)ui.setBicycleState(bicycle.viewState);if(car)ui.setCarState(car.viewState);if(helicopter)ui.setVehicleState(helicopter.viewState);
+    ui.toast(recovered?cycling?'自行车已挪到附近稳固地面，按 W 继续骑行。':driving?'汽车已救援至附近安全公路。':'直升机已脱离障碍并在附近安全空域悬停；按键可继续驾驶，H 重新返航。':'附近没有足够安全的脱困空间，载具保持原位；清理障碍后可重试。',!recovered);
+    canvas.focus();savePose();
+    if(recovered)void persistence?.flush().catch(error=>ui.toast(`脱困位置保存失败：${errorMessage(error)}`,true));
   }
 
   function nearbyInteraction():{kind:'harbor-log'}|{kind:'harbor-repair'}|{kind:'bell'}|{kind:'bicycle'}|{kind:'entrance'}|{kind:'bay';id:string}|{kind:'beach'}|{kind:'site';prompt:DiscoveryPrompt}|{kind:'car'}|{kind:'helicopter'}|{kind:'ground';action:GroundInteraction}|null {

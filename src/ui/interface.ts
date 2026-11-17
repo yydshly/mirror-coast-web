@@ -55,6 +55,7 @@ type Callbacks = {
   onExitDrive?: () => void;
   onResetLook?: () => void;
   onRecoverCar?: () => void;
+  onRecoverVehicle?:()=>void;
   onClearTraffic?: () => void;
   onMapNavigate?:(id:string,drive:boolean)=>void;
   onTourExplore?:(mode:'walk'|'car')=>void;
@@ -240,13 +241,13 @@ export class Interface {
           <small data-tour-next>下一站 · 滨海大道</small>
         </div>
         <div class="mc-flight-metrics"><div><b data-vehicle-speed>0</b><span>km/h</span></div><div><b data-vehicle-altitude>0</b><span>m 高度</span></div><div class="mc-rpm"><b data-vehicle-rpm>0%</b><span>旋翼</span></div></div>
-        <div class="mc-vehicle-actions"><button data-action="pilot">驾驶直升机</button><button data-action="autopilot">开始自动游览</button><button data-action="reset-look">视角回正</button><button data-action="exit-pilot" hidden>下机步行 · F</button><button data-action="return-pad">自动返航降落 · H</button></div>
+        <div class="mc-vehicle-actions"><button data-action="pilot">驾驶直升机</button><button data-action="autopilot">开始自动游览</button><button data-action="reset-look">视角回正</button><button data-action="exit-pilot" hidden>下机步行 · F</button><button data-action="return-pad">自动返航降落 · H</button><button data-action="recover-vehicle" title="只将当前载具移至附近已检查的安全位置；保留世界变化">脱困 · G</button></div>
         <div class="mc-tour-followup" hidden><button data-action="tour-walk">前往渔港步行</button><button data-action="tour-drive">驾车去南湾探索</button><span>缩略地图会标出目标；驾车到沙滩后，再沿栈道步行找救援箱。</span></div>
         <small class="mc-vehicle-look">鼠标拖动环视 · 滚轮缩放 · <kbd>R</kbd> 回正</small>
         <div class="mc-vehicle-foot"><span data-vehicle-note>自动起飞、沿岸游览，最后返航降落。</span><button data-action="tour">路线与操作</button><button data-action="record-flight" title="录制20秒实机画面">录制20秒</button></div>
       </section>
 
-      <section class="mc-bicycle-panel mc-panel" aria-label="自行车骑行" hidden><span class="mc-street-eyebrow">COASTAL CYCLING</span><h3>沿着海风，骑一段。</h3><b data-bicycle-speed>0 km/h</b><p data-bicycle-status>W 蹬车 · S 制动 / 退行 · A / D 转向 · Space 刹车</p><div class="mc-vehicle-actions"><button data-action="exit-bicycle">停稳下车 · F</button><button data-action="reset-look">视角回正 · R</button><button data-action="record-flight">录制</button></div><small>鼠标拖动环视 · 滚轮缩放 · M 地图 · F / E 下车</small></section>
+      <section class="mc-bicycle-panel mc-panel" aria-label="自行车骑行" hidden><span class="mc-street-eyebrow">COASTAL CYCLING</span><h3>沿着海风，骑一段。</h3><b data-bicycle-speed>0 km/h</b><p data-bicycle-status>W 蹬车 · S 制动 / 退行 · A / D 转向 · Space 刹车</p><div class="mc-vehicle-actions"><button data-action="exit-bicycle">停稳下车 · F</button><button data-action="reset-look">视角回正 · R</button><button data-action="recover-vehicle" title="将自行车与骑手一起挪到附近安全地面">脱困 · G</button><button data-action="record-flight">录制</button></div><small>鼠标拖动环视 · 滚轮缩放 · M 地图 · F / E 下车</small></section>
       <div class="mc-aim" aria-hidden="true"><span></span><i></i><span></span></div>
       <div class="mc-target" data-target hidden></div>
 
@@ -360,6 +361,7 @@ export class Interface {
         if (action === 'exit-drive') this.callbacks.onExitDrive?.();
         if (action === 'reset-look') this.callbacks.onResetLook?.();
         if (action === 'recover-car') this.callbacks.onRecoverCar?.();
+        if (action === 'recover-vehicle') this.callbacks.onRecoverVehicle?.();
         if (action === 'clear-traffic') this.callbacks.onClearTraffic?.();
         if (action === 'exit-pilot') this.callbacks.onExitPilot?.();
         if (action === 'return-pad') this.callbacks.onReturnToPad?.();
@@ -679,6 +681,10 @@ export class Interface {
       this.require('[data-action="start-tour"]').textContent='开始海岸游览';
       panel.querySelectorAll<HTMLElement>('[data-return-stop]').forEach(stop=>{const n=Number(stop.dataset.returnStop);stop.classList.toggle('is-current',n===index&&(state.autopilot||state.routeComplete));stop.classList.toggle('is-complete',n<index);});
     }else{panel.dataset.flightMode='tour';delete panel.dataset.returnPhase;}
+    if(state.recoverySuggested){
+      this.require('[data-vehicle-status]').textContent='持续受阻 · 可安全脱困';
+      this.require('[data-vehicle-note]').textContent='普通碰撞仍然生效；按 G 或点击「脱困」，检查附近安全空域后解除卡住。';
+    }
     if (state.piloting && !wasPiloting && this.isHelpOpen) this.toggleHelp();
     this.updateHelp();
     this.updateFlightHint();

@@ -42,6 +42,8 @@ vite.config.ts的base为相对路径，适配GitHub Pages的项目子路径。Wo
 
 ## 本次发布验证
 
+本节对应首次发布的18d2103；后续载具脱困更新的范围和实机记录见 [RECOVERY.md](RECOVERY.md)。
+
 日期：2026-11-17（北京时间）。
 
 - 状态：GitHub Actions 构建与部署均为 success；公开网址 HTTP 200，标题为「镜海 · Mirror Coast」。

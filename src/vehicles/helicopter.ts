@@ -10,8 +10,9 @@ import { VehicleOrbit } from '../input/vehicle-orbit';
 import { clipVehicleCamera } from './chase-camera';
 import type { SceneObstacle } from '../input/scene-collisions';
 import {HELICOPTER_FORWARD_SPEED,HELICOPTER_REVERSE_SPEED,HELICOPTER_STRAFE_SPEED,HELICOPTER_MANUAL_ACCELERATION,HELICOPTER_MANUAL_BRAKING,HELICOPTER_MANUAL_YAW_RATE} from './driving-tuning';
-import {ReturnDeparture,RETURN_LABELS,type ReturnPhase} from './return-flight';
+import {FlightSpace,ReturnDeparture,RETURN_LABELS,type ReturnPhase} from './return-flight';
 import {helipadClear} from './helicopter-access';
+import {findLocalRecovery,VehicleStallWatch} from './recovery';
 
 export type HelicopterInput = { pitch: number; strafe: number; yaw: number; lift: number };
 type Callbacks = { onNotice: (message: string) => void; canvas?: HTMLCanvasElement;canLand?:()=>boolean;flightObstacles?:()=>readonly SceneObstacle[] };
@@ -55,6 +56,7 @@ export class Helicopter {
   private pitchAngle=0;
   private bankAngle=0;
   private recoveryPending=false;
+  private readonly stall=new VehicleStallWatch();
   private flightMode:'tour'|'return'='tour';
   private returnPhase:ReturnPhase='planning';
   private departure:ReturnDeparture|undefined;
@@ -126,10 +128,40 @@ export class Helicopter {
       tourStatus:this.routeComplete?'complete':this.autopilot?'active':this.tourStarted?'paused':'idle',
       waypointDistance:this.location.distanceTo(this.flightMode==='return'?HELIPAD.position:COAST_ROUTE[this.routeIndex].position),
       flightMode:this.flightMode,...this.flightMode==='return'?{returnPhase:this.returnPhase,returnAltitude:this.departure?.altitude}:{},
+      recoverySuggested:this.stall.stuck,
     };
   }
 
   setMuted(muted: boolean): void { this.audio.setMuted(muted); }
+
+  /** Distinct from H/return flight: explicitly relocate a trapped aircraft to
+   * nearby checked airspace, level it and release all stale flight commands. */
+  recoverNearby():boolean{
+    if(this.removed)return false;
+    const origin=this.location.clone(),bounds=this.voxelWorld.bounds;
+    const props=(this.callbacks.flightObstacles?.()??this.obstacleProvider()).filter(b=>
+      !this.ownObstacles.includes(b)&&b.maxX>origin.x-18&&b.minX<origin.x+18&&b.maxZ>origin.z-18&&b.minZ<origin.z+18&&b.maxY>origin.y-6&&b.minY<origin.y+14);
+    const space=new FlightSpace(this.voxelWorld,props,this.heading);
+    const rotation=new Quaternion().setFromAxisAngle(new Vector3(0,1,0),this.heading);
+    const point=findLocalRecovery(origin,this.heading,p=>{
+      if(p.y<14||p.y>146||p.x<bounds.minX-20||p.x>bounds.maxX+20||p.z<bounds.minZ-20||p.z>bounds.maxZ+20)return null;
+      return space.clear(p)&&this.vehicle.clearAt(p,rotation)?p:null;
+    },[0,2,5,9,-2]);
+    if(!point)return false;
+    this.physics.ensureVehicleTerrain(this.voxelWorld,point,8);
+    this.vehicle.syncProps(props,Math.ceil(origin.distanceTo(point)));
+    if(!this.vehicle.clearAt(point,rotation))return false;
+    const body=this.vehicle.body;
+    this.autopilot=false;this.departure=undefined;this.routeComplete=false;this.landingTime=0;
+    this.keys.clear();this.input={pitch:0,strafe:0,yaw:0,lift:0};this.externalInput=false;
+    this.pitchAngle=this.bankAngle=this.bankCommand=0;
+    body.resetForces(false);body.resetTorques(false);body.setLinvel({x:0,y:0,z:0},false);body.setAngvel({x:0,y:0,z:0},false);
+    body.setTranslation(point,true);body.setRotation(rotation,true);
+    this.location.copy(point);this.velocity.set(0,0,0);this.pausedVelocity={x:0,y:0,z:0};this.hoverY=point.y;
+    this.engineOn=this.piloting;if(this.engineOn)this.rpm=Math.max(this.rpm,.85);
+    this.recoveryPending=false;this.cameraReady=false;this.stall.reset();this.resetRenderPose();
+    return true;
+  }
 
   setPiloting(active: boolean): void {
     if (this.removed || this.piloting === active) return;
@@ -296,6 +328,7 @@ export class Helicopter {
     const delta = clamp(dt, 0, .05);
     this.location.copy(this.vehicle.body.translation());
     this.velocity.copy(this.vehicle.body.linvel());
+    this.stall.update(delta,this.location,this.piloting&&this.engineOn&&this.rpm>.75&&this.desiredVelocity.lengthSq()>1,this.vehicle.hasContact());
     const alpha=this.piloting&&!this.visibilitySuspended?this.physics.interpolationAlpha:1;
     this.renderPosition.lerpVectors(this.previousPosition,this.location,alpha);
     this.model.root.position.copy(this.renderPosition);
@@ -432,7 +465,7 @@ export class Helicopter {
     // Rotor collisions stop the body against the real world, not a sampled-height floor.
     if (this.vehicle.hasContact() && (this.desiredVelocity.length()>1||Math.abs(desiredYawRate)>.1) && this.location.y - this.groundHeight(this.location.x, this.location.z) > 2 && this.flightTime - this.lastNotice > 2.5) {
       this.lastNotice = this.flightTime;
-      this.callbacks.onNotice('接触障碍，减速后向空旷处脱离');
+      this.callbacks.onNotice('接触障碍，可倒退、侧移或升降；无法脱离时按 G 安全脱困');
     }
     if (this.location.y > 150) this.hoverY = Math.min(this.hoverY, 148);
   }
