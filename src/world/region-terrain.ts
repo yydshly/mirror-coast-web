@@ -1,12 +1,12 @@
 import { Material } from './palette';
 import { CHUNK_SIZE, chunkKey, type Chunk, type VoxelWorld } from './voxel';
 import { REGION_BOUNDS, REGION_PLACES, REGION_ROADS, sampleRegionalRoad } from './region-layout';
+import {SEA_LEVEL} from './sea-level';
 
 export { regionalRoadAt, sampleRegionalRoad } from './region-layout';
 
 const WIDTH = REGION_BOUNDS.maxX - REGION_BOUNDS.minX;
 const DEPTH = REGION_BOUNDS.maxZ - REGION_BOUNDS.minZ;
-const SEA_LEVEL = 12;
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 const smooth = (a: number, b: number, value: number): number => {
   const t = clamp((value - a) / (b - a), 0, 1);

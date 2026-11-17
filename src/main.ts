@@ -711,6 +711,8 @@ async function boot(): Promise<void> {
       work.supportAnalysis=performance.now()-physicsMark;
     }
     markWork('physicsAndSupport');
+    environment?.setCameraPosition(camera.position);
+    canvas.dataset.underwater=String(environment?.isUnderwater??false);
     targetTimer += dt;
     if (targetTimer >= .08 && ready && !piloting && !driving) {
       targetTimer = 0;
@@ -951,9 +953,9 @@ async function boot(): Promise<void> {
   function recoverCurrentVehicle():void{
     if(!ready||changingSave||reloading||(!cycling&&!driving&&!piloting)||performance.now()-lastVehicleRecovery<1000)return;
     lastVehicleRecovery=performance.now();
-    const recovered=cycling?bicycle?.recoverNearby():driving?car?.recoverToRoad():helicopter?.recoverNearby();
+    const recovered=cycling?bicycle?.recoverNearby():driving?car?.recoverNearby():helicopter?.recoverNearby();
     if(bicycle)ui.setBicycleState(bicycle.viewState);if(car)ui.setCarState(car.viewState);if(helicopter)ui.setVehicleState(helicopter.viewState);
-    ui.toast(recovered?cycling?'自行车已挪到附近稳固地面，按 W 继续骑行。':driving?'汽车已救援至附近安全公路。':'直升机已脱离障碍并在附近安全空域悬停；按键可继续驾驶，H 重新返航。':'附近没有足够安全的脱困空间，载具保持原位；清理障碍后可重试。',!recovered);
+    ui.toast(recovered?cycling?'自行车已挪到附近稳固地面，按 W 继续骑行。':driving?'汽车已扶正到安全地面，按 W 继续驾驶。':'直升机已脱离障碍并在附近安全空域悬停；按键可继续驾驶，H 重新返航。':'没有找到可安全停放的地点，载具保持原位。',!recovered);
     canvas.focus();savePose();
     if(recovered)void persistence?.flush().catch(error=>ui.toast(`脱困位置保存失败：${errorMessage(error)}`,true));
   }

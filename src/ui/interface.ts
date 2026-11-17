@@ -213,7 +213,7 @@ export class Interface {
         <p data-car-status>沿着海岸公路，去下一个街区。</p>
         <div class="mc-car-instruments"><span data-car-left aria-label="左转向灯">◀</span><b data-car-gear>D</b><span data-car-right aria-label="右转向灯">▶</span><small data-car-condition>动力正常 · 无故障降速</small></div>
         <div class="mc-car-actions"><button data-action="exit-drive">停车下车</button><button data-action="reset-look">视角回正</button><button data-action="record-flight" title="录制20秒实机画面">录制20秒</button></div>
-        <div class="mc-car-actions mc-car-recovery"><button data-action="recover-car" title="只将你驾驶的汽车救援至附近安全公路">救援我的汽车</button><button data-action="clear-traffic" title="清理附近60米的事故车辆，保留你的汽车和世界变化">清理附近事故</button></div>
+        <div class="mc-car-actions mc-car-recovery"><button data-action="recover-car" title="将你的汽车扶正至可行驶的道路或岸上；附近没有落点时继续查找地图中的安全道路">救援我的汽车 · G</button><button data-action="clear-traffic" title="清理附近60米的事故车辆，保留你的汽车和世界变化">清理附近事故</button></div>
         <small class="mc-car-keys"><kbd>W / S</kbd> 油门 / 倒车 <kbd>A / D</kbd> 转向 <kbd>Space</kbd> 刹车 <kbd>G</kbd> 脱困 <kbd>Esc</kbd> 下车</small>
         <small class="mc-vehicle-look">鼠标拖动环视 · 滚轮缩放 · <kbd>R</kbd> 回正</small>
         <small class="mc-car-lights"><kbd>Z / C</kbd> 左 / 右灯 <kbd>X</kbd> 双闪 · 转向时自动示意</small>
@@ -851,7 +851,7 @@ export class Interface {
     if(mode==='bicycle'){this.require('#mc-help-title').textContent='沿海慢骑，也可以停下来。';this.require('.mc-help p').textContent='W 蹬车，S 制动后可以低速退行挪车，Space 刹车。转弯随车速变化，接近高台阶、断边或水面会停住；F / E 安全下车后继续步行。卡在障碍旁可按 G，移到附近安全地面。鼠标拖动只环视，不改变车头方向。';}
     else if (mode === 'drive') {
       this.require('#mc-help-title').textContent = '沿着公路，开向海岸。';
-      this.require('.mc-help p').textContent = '旧城、工业港、山麓社区与海岬由真实道路相连。按 M 查看导航；停车下车后可以继续步行探索。车辆卡住或侧翻，可按 G 救援到附近安全公路。';
+      this.require('.mc-help p').textContent = '旧城、工业港、山麓社区与海岬由真实道路相连。按 M 查看导航；停车下车后可以继续步行探索。深水无法行驶，请倒车回岸；已入水、卡住或侧翻时按 G，将汽车扶正到道路或岸上。';
     } else if (mode === 'walk') {
       this.require('#mc-help-title').textContent = '沿着街灯，慢慢走。';
       this.require('.mc-help p').textContent = '靠近长椅、面向座位按 E 坐下；坐着时拖动鼠标看风景，E / Space 起身，WASD 起身后行走。面向有安全落点的低栏按 E 翻越；Space 是普通跳跃。Esc 释放操作，C 切换视角。';

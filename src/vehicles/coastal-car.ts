@@ -11,9 +11,11 @@ import { clipVehicleCamera } from './chase-camera';
 import { Material } from '../world/palette';
 import { REGION_ROADS } from '../world/region-layout';
 import {CAR_FORWARD_SPEED,CAR_REVERSE_SPEED,type CarSignal} from './driving-tuning';
+import {SEA_LEVEL} from '../world/sea-level';
 
 export const CAR_SPAWN = { x: 248, y: 16.85, z: 164 };
 const RIDE_HEIGHT = .85, HALF_WIDTH = .97, HALF_LENGTH = 2.35;
+const MAX_WADING_DEPTH=.35;
 const WHEEL_X=.95, WHEEL_Z=1.43, WHEEL_RADIUS=.39;
 const SHELL_GROUND_BOXES=[
  {center:{x:0,y:-.075,z:-1.73},half:{x:.85,y:.23,z:.46}},
@@ -25,8 +27,8 @@ type Support={highest:number;average:number;front:number;rear:number;left:number
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 export type CarState = { position: Vec3; heading: number; speed: number;rigidBody?:{rotation:Quat;linearVelocity:Vec3;angularVelocity:Vec3} };
 export type CarInput = { throttle: number; steer: number; brake: boolean };
-export type CarBlockage='front'|'rear'|'step'|'trapped'|null;
-export type CarViewState = { driving: boolean; speed: number; blocked: boolean; grounded: boolean;overturned:boolean;blockage:CarBlockage;recovering:boolean;signal:CarSignal;signalLit:boolean;braking:boolean };
+export type CarBlockage='front'|'rear'|'step'|'trapped'|'water'|null;
+export type CarViewState = { driving: boolean; speed: number; blocked: boolean; grounded: boolean;overturned:boolean;blockage:CarBlockage;recovering:boolean;signal:CarSignal;signalLit:boolean;braking:boolean;waterDepth?:number };
 
 /** Road motor on stable ground; shared rigid-body response to impacts and lost support. */
 export class CoastalCar {
@@ -109,7 +111,7 @@ export class CoastalCar {
   }
 
   get position(): Vector3 { return this.location; }
-  get viewState(): CarViewState { const q=this.vehicle.body.rotation();return { driving: this.driving, speed: this.speed, blocked: this.blocked, grounded: this.grounded,blockage:this.blockage,overturned:1-2*(q.x*q.x+q.z*q.z)<.55,recovering:this.vehicle.dynamic,signal:this.activeSignal,signalLit:this.signalClock%1<.5,braking:this.input.brake||this.input.throttle<0&&this.speed>.2||this.input.throttle>0&&this.speed<-.2 }; }
+  get viewState(): CarViewState { const q=this.vehicle.body.rotation();return { driving: this.driving, speed: this.speed, blocked: this.blocked, grounded: this.grounded,blockage:this.blockage,overturned:1-2*(q.x*q.x+q.z*q.z)<.55,recovering:this.vehicle.dynamic,signal:this.activeSignal,signalLit:this.signalClock%1<.5,braking:this.input.brake||this.input.throttle<0&&this.speed>.2||this.input.throttle>0&&this.speed<-.2,waterDepth:Math.max(0,SEA_LEVEL+RIDE_HEIGHT-this.location.y) }; }
   private get activeSignal():CarSignal{return this.vehicle.dynamic&&Math.abs(this.speed)<2?'hazard':this.signal;}
   toggleSignal(signal:Exclude<CarSignal,'off'>):void{this.signal=this.signal===signal?'off':signal;this.manualSignal=this.signal!=='off';this.signalHeading=this.heading;this.signalTurn=0;this.signalQuiet=0;this.signalClock=0;}
   get orbitState() { return this.orbit.state; }
@@ -147,6 +149,7 @@ export class CoastalCar {
     candidates.sort((a,b)=>a.distance-b.distance);
     const props=this.recoveryObstacleProvider?.()??this.obstacleProvider(),rotation=new Quaternion();
     for(const candidate of candidates)for(const heading of this.roadHeadingsAt(candidate.x,candidate.z,candidate.top)){
+      if(candidate.top<SEA_LEVEL)continue;
       const support=this.groundSupport(candidate.x,candidate.z,heading,candidate.top);
       if(!support)continue;
       const c=Math.cos(heading),s=Math.sin(heading);
@@ -158,19 +161,58 @@ export class CoastalCar {
       const position={x:candidate.x,y:support.highest+RIDE_HEIGHT,z:candidate.z};
       rotation.setFromAxisAngle(new Vector3(0,1,0),heading);
       if(!this.staticClear(position,heading,props)||!this.vehicle.canOccupy(position,rotation))continue;
-      this.vehicle.setDynamic(false);this.vehicle.body.setLinvel({x:0,y:0,z:0},false);this.vehicle.body.setAngvel({x:0,y:0,z:0},false);
-      this.location.copy(position);this.heading=heading;this.speed=0;this.blocked=false;this.blockage=null;this.grounded=true;
-      this.keys.clear();this.input={throttle:0,steer:0,brake:false};this.externalInput=false;this.steering=0;this.signal='off';this.manualSignal=false;
-      this.orientation.copy(rotation);this.vehicle.body.setTranslation(position,false);this.vehicle.body.setRotation(rotation,false);
-      this.location.copy(this.vehicle.body.translation());
-      this.vehicle.body.setNextKinematicTranslation(this.location);this.vehicle.body.setNextKinematicRotation(rotation);
-      this.model.root.position.copy(this.location);this.model.root.quaternion.copy(rotation);
-      this.applySupport(support);this.applyModelPose(true);
-      this.resetRenderPose();
-      this.cameraReady=false;return true;
+      return this.finishRecovery(position,heading,support);
     }
     this.speed=0;this.keys.clear();this.input={throttle:0,steer:0,brake:false};this.externalInput=false;
     return false;
+  }
+  /** Manual G rescue also works away from paved roads. Search local firm land
+   * first, then a bounded set of real road samples across this finite map. */
+  recoverNearby():boolean{
+    if(this.recoverToRoad())return true;
+    const source=this.location.clone(),props=this.recoveryObstacleProvider?.()??this.obstacleProvider();
+    for(const radius of [0,2,4,6,10,16,24,32])for(let i=0;i<(radius?16:1);i++){
+      const angle=i*Math.PI/8,x=source.x+Math.sin(angle)*radius,z=source.z+Math.cos(angle)*radius;
+      const top=this.floorAt(x,z,WORLD_HEIGHT,WORLD_HEIGHT);
+      if(top!==null&&Math.abs(top-(source.y-RIDE_HEIGHT))<=4&&this.tryLandRecovery(x,z,props,false))return true;
+    }
+    const candidates:Array<{x:number;z:number;distance:number}>=[],seen=new Set<string>();
+    const add=(x:number,z:number)=>{const key=`${x.toFixed(2)},${z.toFixed(2)}`;if(seen.has(key))return;seen.add(key);candidates.push({x,z,distance:(x-source.x)**2+(z-source.z)**2});};
+    for(const road of REGION_ROADS)for(let i=1;i<road.points.length;i++){
+      const a=road.points[i-1],b=road.points[i],dx=b.x-a.x,dz=b.z-a.z,length=Math.hypot(dx,dz),steps=Math.max(1,Math.ceil(length/12));
+      for(let n=0;n<=steps;n++)add(a.x+dx*n/steps,a.z+dz*n/steps);
+      const t=clamp(((source.x-a.x)*dx+(source.z-a.z)*dz)/(length*length),0,1);add(a.x+dx*t,a.z+dz*t);
+    }
+    for(const [x,z]of [[248,164],[274,154],[130,164],[176,164],[84,164],[222,125],[130,80]])add(x,z);
+    candidates.sort((a,b)=>a.distance-b.distance);
+    for(const p of candidates)if(this.tryLandRecovery(p.x,p.z,props,true))return true;
+    return false;
+  }
+  private tryLandRecovery(x:number,z:number,props:readonly SceneObstacle[],road:boolean):boolean{
+    const top=road?this.roadSurfaceAt(x,z):this.floorAt(x,z,WORLD_HEIGHT,WORLD_HEIGHT);if(top===null||top<SEA_LEVEL)return false;
+    const material=this.world.getVoxel(Math.floor(x),Math.round(top)-1,Math.floor(z));
+    if(![Material.Sand,Material.Grass,Material.Rock,Material.Road,Material.Stripe,Material.Concrete].includes(material as never))return false;
+    const headings=road?this.roadHeadingsAt(x,z,top):[this.heading,this.heading+Math.PI,this.heading+Math.PI/2,this.heading-Math.PI/2];
+    for(const heading of headings){
+      const support=this.groundSupport(x,z,heading,top);if(!support||Math.min(...support.heights)<SEA_LEVEL||support.highest-Math.min(...support.heights)>.55)continue;
+      const position={x,y:support.highest+RIDE_HEIGHT,z},q=new Quaternion().setFromAxisAngle(new Vector3(0,1,0),heading);let clear=true;
+      // Reserve a short usable departure, including the road's inward direction
+      // when its nearest point is a dead end beside the sea.
+      for(const distance of [0,2.5,5]){
+        const p={x:x-Math.sin(heading)*distance,y:position.y,z:z-Math.cos(heading)*distance},s=this.groundSupport(p.x,p.z,heading,support.highest);
+        if(!s||Math.min(...s.heights)<SEA_LEVEL||!this.staticClear({...p,y:s.highest+RIDE_HEIGHT},heading,props)){clear=false;break;}
+        if(road)for(const dx of [-WHEEL_X,WHEEL_X])for(const dz of [-WHEEL_Z,WHEEL_Z])if(this.roadSurfaceAt(p.x+Math.cos(heading)*dx+Math.sin(heading)*dz,p.z-Math.sin(heading)*dx+Math.cos(heading)*dz)===null)clear=false;
+      }
+      if(clear&&this.vehicle.canOccupy(position,q))return this.finishRecovery(position,heading,support);
+    }return false;
+  }
+  private finishRecovery(position:Vec3,heading:number,support:Support):boolean{
+    this.vehicle.setDynamic(false);this.vehicle.body.setLinvel({x:0,y:0,z:0},false);this.vehicle.body.setAngvel({x:0,y:0,z:0},false);
+    this.location.copy(position);this.heading=heading;this.speed=0;this.blocked=false;this.blockage=null;this.grounded=true;
+    this.keys.clear();this.input={throttle:0,steer:0,brake:false};this.externalInput=false;this.steering=0;this.signal='off';this.manualSignal=false;
+    this.orientation.setFromAxisAngle(new Vector3(0,1,0),heading);this.vehicle.body.setTranslation(position,false);this.vehicle.body.setRotation(this.orientation,false);
+    this.location.copy(this.vehicle.body.translation());this.vehicle.body.setNextKinematicTranslation(this.location);this.vehicle.body.setNextKinematicRotation(this.orientation);
+    this.model.root.position.copy(this.location);this.model.root.quaternion.copy(this.orientation);this.applySupport(support);this.applyModelPose(true);this.resetRenderPose();this.cameraReady=false;return true;
   }
 
   setDriving(active: boolean): void {
@@ -318,6 +360,11 @@ export class CoastalCar {
     this.previousHeading=this.heading;this.previousWheelHeights=this.wheelHeights.slice();
     this.steering+=(this.input.steer-this.steering)*(1-Math.exp(-dt*11));
     this.vehicle.setWheelSteering(this.steering*.62/(1+this.speed*this.speed/100));
+    if(SEA_LEVEL+RIDE_HEIGHT-this.location.y>MAX_WADING_DEPTH){
+      if(this.vehicle.dynamic){const input=this.input;this.input={throttle:0,steer:0,brake:true};this.dynamicStep(dt);this.input=input;}
+      else{this.speed=0;this.fallWithoutSupport(dt);this.vehicle.body.setNextKinematicTranslation(this.location);}
+      this.blocked=true;this.blockage='water';return;
+    }
     if(this.vehicle.dynamic){this.dynamicStep(dt);return;}
     const brake = this.input.brake || this.input.throttle < 0 && this.speed > .2 || this.input.throttle>0&&this.speed<-.2;
     const acceleration = brake ? -Math.sign(this.speed) * 13 : this.input.throttle * (this.speed < 0 ? 4 : 6);
@@ -334,6 +381,7 @@ export class CoastalCar {
     for (let i = 0; i < count; i++) {
       const candidate = this.location.clone();
       candidate.x -= Math.sin(this.heading) * travel / count; candidate.z -= Math.cos(this.heading) * travel / count;
+      if(this.location.y-RIDE_HEIGHT<=SEA_LEVEL+1.25&&this.depthAt(candidate,this.heading)>MAX_WADING_DEPTH){this.blocked=true;this.blockage='water';this.speed=0;break;}
       const support = this.groundSupport(candidate.x, candidate.z, this.heading, this.location.y - RIDE_HEIGHT);
       if (!support) {
         if(this.unstableAt(candidate)&&this.driveClear(candidate,this.heading)&&this.vehicle.canOccupy(candidate,this.orientation)){
@@ -352,7 +400,7 @@ export class CoastalCar {
     }
     if(!this.grounded)this.fallWithoutSupport(dt);
     if (this.blocked && this.elapsed - this.lastNotice > 4 && Math.abs(this.input.throttle) > .1) {
-      this.lastNotice = this.elapsed; this.callbacks.onNotice(this.blockage==='trapped'?'车辆卡住，可使用道路救援。':this.blockage==='step'?'道路台阶或落差过大，请沿坡道行驶。':this.blockage==='rear'?'后方受阻，请向前调整或使用道路救援。':'前方受阻，松开油门后倒车调整；卡住时可使用道路救援。');
+      this.lastNotice = this.elapsed; this.callbacks.onNotice(this.blockage==='water'?'前方水深，不能继续驶入；请倒车回岸，或按 G 救援。':this.blockage==='trapped'?'车辆卡住，可使用道路救援。':this.blockage==='step'?'道路台阶或落差过大，请沿坡道行驶。':this.blockage==='rear'?'后方受阻，请向前调整或使用道路救援。':'前方受阻，松开油门后倒车调整；卡住时可使用道路救援。');
     }
     this.orientation.setFromAxisAngle(new Vector3(0, 1, 0), this.heading);
     this.vehicle.body.setNextKinematicTranslation(this.location); this.vehicle.body.setNextKinematicRotation(this.orientation);
@@ -463,7 +511,7 @@ export class CoastalCar {
     for (const dx of [-WHEEL_X, WHEEL_X]) for (const dz of [-WHEEL_Z, WHEEL_Z]) {
       const px = x + c * dx + s * dz, pz = z - s * dx + c * dz;
       const floor = this.floorAt(px, pz, currentFloor + .25,parked?WORLD_HEIGHT:4);
-      if (floor === null || (!parked&&(floor < currentFloor - 2.05||floor<=12))) return null;
+      if (floor === null || (!parked&&floor < currentFloor - 2.05)) return null;
       // The tyre reaches a curb before its axle does. A circular envelope
       // raises the contact gradually on a usable tread, rather than burying
       // the rim or switching a valid graded road into crash physics.
@@ -483,6 +531,13 @@ export class CoastalCar {
     if(!support)return;
     this.location.y=support.highest+RIDE_HEIGHT;this.applySupport(support);this.grounded=true;this.fallSpeed=0;
     this.vehicle.body.setTranslation(this.location,false);this.model.root.position.copy(this.location);this.applyModelPose(true);
+  }
+  private depthAt(position:Vec3,heading:number):number{
+    let depth=0;const c=Math.cos(heading),s=Math.sin(heading);
+    for(const x of [-WHEEL_X,WHEEL_X])for(const z of [-WHEEL_Z,WHEEL_Z]){
+      const top=this.floorAt(position.x+c*x+s*z,position.z-s*x+c*z,position.y-RIDE_HEIGHT+.25,WORLD_HEIGHT);
+      if(top!==null)depth=Math.max(depth,SEA_LEVEL-top);
+    }return depth;
   }
   private applySupport(support:Support):void{
     this.pitch=clamp(Math.atan2(support.front-support.rear,2*WHEEL_Z),-.4,.4);

@@ -1,11 +1,12 @@
 import {
-  BackSide, Color, DataTexture, DirectionalLight, FogExp2, HemisphereLight, LinearFilter,
+  BackSide,DoubleSide, Color, DataTexture, DirectionalLight, FogExp2, HemisphereLight, LinearFilter,
   Mesh, PlaneGeometry, RingGeometry,PMREMGenerator, RedFormat, Scene, ShaderMaterial,
   SphereGeometry, UnsignedByteType, Vector2, Vector3, type WebGLCubeRenderTarget, type WebGLRenderer,type Camera,
 } from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { DEFAULT_WORLD_BOUNDS, type VoxelWorld, type WorldBounds } from '../world/voxel';
 import {ShadowCadence} from './shadow-cadence';
+import {SEA_LEVEL} from '../world/sea-level';
 
 /** One coherent sun/sky/water system. Reflection probes contain only the sky. */
 export class Environment {
@@ -40,6 +41,12 @@ export class Environment {
   private terrainBounds: WorldBounds = DEFAULT_WORLD_BOUNDS;
   private bathymetry = new Uint8Array(1);
   private fogScale = 1;
+  private underwater=false;
+  get isUnderwater(){return this.underwater;}
+  setCameraPosition(position:{y:number}):void{
+    const underwater=position.y<SEA_LEVEL+(this.underwater?.05:-.1);
+    if(underwater!==this.underwater){this.underwater=underwater;this.applyAtmosphere();}
+  }
   hour = 17.2;
 
   constructor(private scene: Scene, renderer?: WebGLRenderer) {
@@ -68,6 +75,7 @@ export class Environment {
     this.terrain.needsUpdate = true;
 
     const seaMaterial = new ShaderMaterial({
+      side:DoubleSide,
       uniforms: {
         uTime: { value: 0 }, uSun: { value: new Vector3() }, uDay: { value: 1 }, uRain: this.wetness,
         uDeep: { value: new Color('#173e51') }, uShallow: { value: new Color('#528389') },
@@ -87,7 +95,7 @@ export class Environment {
           vec4 world = modelMatrix * vec4(position, 1.0);
           vec2 uv=(world.xz-uOrigin)/uSize;
           float bed=texture2D(uTerrain,clamp(uv,.001,.999)).r*95.;
-          float shelter=.25+.75*smoothstep(.6,4.,12.-bed);
+          float shelter=.25+.75*smoothstep(.6,4.,${SEA_LEVEL.toFixed(1)}-bed);
           float edge=1.-smoothstep(750.,1100.,max(abs(world.x-128.),abs(world.z-128.)));
           world.y+=(sin(dot(world.xz,vec2(.1692,.0612))-uTime*.58)*.10
                    +sin(dot(world.xz,vec2(-.0456,.0836))+uTime*.43)*.065)*shelter*edge*(1.+uRain*.35);
@@ -136,7 +144,7 @@ export class Environment {
           vec2 edgeMeters = min(vWorld.xz-uOrigin,uOrigin+uSize-vWorld.xz);
           float mappedBed = texture2D(uTerrain, clamp(uv, .001, .999)).r * 95.0;
           float bed = mix(-24.0, mappedBed, inside * smoothstep(0.0,48.0,min(edgeMeters.x,edgeMeters.y)));
-          float depth = max(0.0, 12.0 - bed);
+          float depth = max(0.0, ${SEA_LEVEL.toFixed(1)} - bed);
           float waterDistance = length(cameraPosition - vWorld);
           float footprint = max(length(dFdx(vWorld.xz)), length(dFdy(vWorld.xz)));
           vec2 wind = vec2(uTime * .075, -uTime * .041);
@@ -189,7 +197,7 @@ export class Environment {
     });
     this.sea = new Mesh(new PlaneGeometry(2400,2400,240,240), seaMaterial);
     this.sea.rotation.x = -Math.PI / 2;
-    this.sea.position.set(128, 12, 128);
+    this.sea.position.set(128, SEA_LEVEL, 128);
     this.sea.frustumCulled = false;
     scene.add(this.sea);
     this.sea.name='coastal-water-surface';
@@ -205,7 +213,7 @@ export class Environment {
     const resize = this.bathymetry.length !== width * depth || this.terrain.image.width !== width || this.terrain.image.height !== depth || this.terrainBounds.minX !== b.minX || this.terrainBounds.minZ !== b.minZ;
     const sample = (x: number,z: number) => {
       const index = x - b.minX + (z - b.minZ) * width; this.bathymetry[index] = 0;
-      for (let y = 12; y >= 0; y--) if (world.getVoxel(x,y,z)) { this.bathymetry[index] = Math.round(y / 95 * 255); break; }
+      for (let y = SEA_LEVEL; y >= 0; y--) if (world.getVoxel(x,y,z)) { this.bathymetry[index] = Math.round(y / 95 * 255); break; }
     };
     if (resize || !dirtyKeys) {
       this.bathymetry = new Uint8Array(width * depth);
@@ -217,7 +225,7 @@ export class Environment {
     }
     this.terrainBounds = b;
     this.fogScale = Math.max(width,depth)/256; this.applyAtmosphere();
-    this.sea.material.uniforms.uFogDensity.value = .00145 / this.fogScale;
+    this.sea.material.uniforms.uFogDensity.value = this.underwater?.04:.00145 / this.fogScale;
     if (resize) {
       this.terrain.dispose(); this.terrain = new DataTexture(this.bathymetry,width,depth,RedFormat,UnsignedByteType);
       this.terrain.minFilter = this.terrain.magFilter = LinearFilter;
@@ -328,6 +336,12 @@ export class Environment {
     const nightFog = new Color('#20364f').lerp(new Color('#304858'), this.twilight * .4);
     fog.color.copy(clearFog).lerp(stormFog, rain).lerp(nightFog, night);
     fog.density = .0019 / this.fogScale + rain * .0032;
+    if(this.underwater){
+      fog.color.set('#376975').multiplyScalar(.35+.65*day);fog.density=.04;
+      this.scene.background=fog.color.clone();this.sky.visible=false;this.stormSky.visible=false;
+      this.sun.intensity*=.55;this.ambient.color.set('#86b9bb');this.ambient.intensity*=.8;
+    }
+    this.sea.material.uniforms.uFogDensity.value=this.underwater?.04:.00145/this.fogScale;
     this.sea.material.uniforms.uHorizon.value.copy(fog.color);
     this.scene.environmentIntensity = day * (.27 - rain * .08) + night * (.34 + this.twilight * .08);
   }
