@@ -4,7 +4,7 @@ import {OBB} from 'three/addons/math/OBB.js';
 
 /** Shared by the character and camera; bounds use actual world metres. */
 export type SurfaceMotion={frame:number;delta:Vec3};
-export type SceneObstacle = { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number; standable?: boolean;vaultable?:boolean;physicsManaged?:boolean;pedestrianId?:number;bicycle?:boolean;trafficId?:number;trafficKind?:'sedan'|'van'|'bus';trafficVelocity?:Vec3;trafficHeading?:number;trafficHalfSize?:Vec3;obb?:OBB;motion?:SurfaceMotion;surface?:readonly [number,number,number,number];hull?:Float32Array };
+export type SceneObstacle = { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number; standable?: boolean;vaultable?:boolean;physicsManaged?:boolean;pedestrianId?:number;pedestrianHeading?:number;bicycle?:boolean;trafficId?:number;trafficKind?:'sedan'|'van'|'bus';trafficVelocity?:Vec3;trafficHeading?:number;trafficHalfSize?:Vec3;obb?:OBB;motion?:SurfaceMotion;surface?:readonly [number,number,number,number];hull?:Float32Array };
 
 /** Existing actor contacts may slide apart, but may never deepen or cross the
  * other actor's centre. Callers restrict this exception to people/bicycles. */

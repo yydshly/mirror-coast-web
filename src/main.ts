@@ -388,7 +388,11 @@ async function boot(): Promise<void> {
   voxelMaterial.onBeforeCompile=(shader,renderer)=>{wetVoxelShader(shader,renderer);voxelSurfaceFinish(shader);};
   voxelMaterial.customProgramCacheKey = () => 'mirror-coast-wet-voxel-v4-materials';
   ui.setLoading(.08, '正在初始化坍塌物理');
+  let lastPedestrianNotice=-Infinity;
   physics = await CollapsePhysics.create(scene, voxelMaterial, {
+    onPedestrianImpact:impact=>{if(!impact.player)return;car?.pedestrianImpact();const now=performance.now();if(now-lastPedestrianNotice>2000){lastPedestrianNotice=now;ui.toast(impact.kind==='fall'?'碰撞到行人，请减速停车；行人会在安全处起身。':'碰到行人，请减速让行。');}},
+    pedestrianRecovery:(id,center)=>streetLife?.simulation.pedestrianRecoveryPosition(id,center)??null,
+    onPedestrianRecovered:(id,feet)=>streetLife?.simulation.pedestrianRecovered(id,feet),
     onStateChange: (fragments) => {
       try { persistence!.recordFragments(fragments); }
       catch (error) { ui.toast(`废墟状态暂未保存：${errorMessage(error)}`, true); }
@@ -613,6 +617,7 @@ async function boot(): Promise<void> {
       ...(car?{vehicle:{position:car.position,heading:car.snapshot().heading,speed:car.viewState.speed}}:{}),
       night:environment!.night.value,wetness:environment!.wetness.value,
       trafficPhysics:physics!.trafficSnapshot(true),
+      pedestrianPhysics:physics!.pedestrianSnapshot(),
       obstacles:trafficScenery,
       obstacleRevision:trafficObstacleRevision,dynamicObstacles:[...sceneCollisions.moving,...physics!.walkObstacles,...decorPhysics.obstacles,...bicycle?.obstacles??[]],
     });
@@ -765,7 +770,7 @@ async function boot(): Promise<void> {
       if(routeLandscape)canvas.dataset.routeLandscape=JSON.stringify(routeLandscape.diagnostics);
       if(terrainPreview)canvas.dataset.terrainLOD=JSON.stringify(terrainPreview.diagnostics);
       if(dressed)canvas.dataset.coastalSound=JSON.stringify(coastAmbience.diagnostics);
-      if(streetLife){canvas.dataset.streetLife=JSON.stringify(streetLife.diagnostics);canvas.dataset.trafficActors=JSON.stringify(streetLife.simulation.cars.map(c=>({id:c.id,position:c.position,heading:c.heading,speed:c.speed,visible:c.visible,bypass:!!c.bypass,physical:!!c.physicsRotation,travelled:c.travelled})));canvas.dataset.pedestrians=JSON.stringify(streetLife.simulation.people.map(p=>({id:p.id,position:p.position,speed:p.speed,visible:p.visible})));}
+      if(streetLife){canvas.dataset.streetLife=JSON.stringify(streetLife.diagnostics);canvas.dataset.trafficActors=JSON.stringify(streetLife.simulation.cars.map(c=>({id:c.id,position:c.position,heading:c.heading,speed:c.speed,visible:c.visible,bypass:!!c.bypass,physical:!!c.physicsRotation,travelled:c.travelled})));canvas.dataset.pedestrians=JSON.stringify(streetLife.simulation.people.map(p=>({id:p.id,position:p.position,speed:p.speed,visible:p.visible,reaction:p.physical?.kind,phase:p.physical?.phase,rejoining:!!p.rejoining})));}
       if(groundDetail)canvas.dataset.groundDetail=JSON.stringify(groundDetail.diagnostics);
       if(neighborhood)canvas.dataset.neighborhood=JSON.stringify(neighborhood.diagnostics);
       if(walkTransitions)canvas.dataset.walkTransitions=JSON.stringify(walkTransitions.diagnostics);

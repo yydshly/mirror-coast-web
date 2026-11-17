@@ -128,6 +128,7 @@ export class CoastalCar {
   }
   /** Full prop list is used for road rescue and the entry pose check, not each frame. */
   setRecoveryObstacleProvider(provider: () => readonly SceneObstacle[]): void { this.recoveryObstacleProvider=provider; }
+  pedestrianImpact():void{if(!this.vehicle.dynamic)this.speed*=.92;}
   setNight(night: number): void { this.night=night;this.model.setNight(night,this.driving); }
 
   /** Nearby actual road, four supported wheels, no actor/prop overlap. */
@@ -225,6 +226,10 @@ export class CoastalCar {
 
   beforePhysics(dt: number): void {
     this.elapsed += Math.max(0, Math.min(dt, .05));
+    if(this.physics.hasActivePedestrians){
+      for(const p of this.physics.pedestrianSnapshot())this.physics.ensureVehicleTerrain(this.world,p.position,4);
+      if(!this.vehicle.dynamic){this.propClock+=dt;if(this.propClock>.2){this.propClock=0;this.vehicle.syncProps(this.obstacleProvider());}}
+    }
     if(this.checkRestoredPose){
       this.checkRestoredPose=false;
       // Run after scenery/road providers are ready. A solver cannot reliably
@@ -324,23 +329,23 @@ export class CoastalCar {
     const angle = this.heading + this.speed*Math.tan(wheelAngle)/2.86*dt;
     const nextHeading = Math.atan2(Math.sin(angle),Math.cos(angle));
     const rotation = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), nextHeading);
-    if (this.staticClear(this.location, nextHeading) && this.vehicle.canOccupy(this.location, rotation)) this.heading = nextHeading;
+    if (this.driveClear(this.location, nextHeading) && this.vehicle.canOccupy(this.location, rotation)) this.heading = nextHeading;
     const travel = this.speed * dt, count = Math.max(1, Math.ceil(Math.abs(travel) / .15));
     for (let i = 0; i < count; i++) {
       const candidate = this.location.clone();
       candidate.x -= Math.sin(this.heading) * travel / count; candidate.z -= Math.cos(this.heading) * travel / count;
       const support = this.groundSupport(candidate.x, candidate.z, this.heading, this.location.y - RIDE_HEIGHT);
       if (!support) {
-        if(this.unstableAt(candidate)&&this.staticClear(candidate,this.heading)&&this.vehicle.canOccupy(candidate,this.orientation)){
+        if(this.unstableAt(candidate)&&this.driveClear(candidate,this.heading)&&this.vehicle.canOccupy(candidate,this.orientation)){
           this.enterDynamics();return;
         }
         this.grounded=!!this.groundSupport(this.location.x,this.location.z,this.heading,this.location.y-RIDE_HEIGHT);this.blocked=true;this.blockage='step';this.speed=0;break;
       }
       candidate.y = support.highest + RIDE_HEIGHT;
       this.orientation.setFromAxisAngle(new Vector3(0, 1, 0), this.heading);
-      if (!this.staticClear(candidate, this.heading) || !this.vehicle.canOccupy(candidate, this.orientation)) {
+      if (!this.driveClear(candidate, this.heading) || !this.vehicle.canOccupy(candidate, this.orientation)) {
         if(Math.abs(this.speed)>.8){const velocity=this.vehicle.promoteImpact(candidate,this.orientation,{x:-Math.sin(this.heading)*this.speed,y:0,z:-Math.cos(this.heading)*this.speed});this.enterDynamics(velocity);this.callbacks.onImpact?.(candidate,Math.min(1.5,Math.abs(this.speed)/12));return;}
-        this.blocked=true;this.blockage=this.staticClear(this.location,this.heading)?this.input.throttle<0?'rear':'front':'trapped';this.speed=0;break;
+        this.blocked=true;this.blockage=this.driveClear(this.location,this.heading)?this.input.throttle<0?'rear':'front':'trapped';this.speed=0;break;
       }
       this.location.copy(candidate); this.grounded = true;
       this.applySupport(support);
@@ -402,7 +407,7 @@ export class CoastalCar {
       // bumper in a wall and make every later forward/reverse step invalid.
       // The road motor anchors at the highest wheel and offsets the visible
       // suspension; physics anchors near the average contact plane instead.
-      if(support&&Math.abs(candidate.y-this.location.y)<.18+support.highest-support.average&&this.staticClear(candidate,this.heading)&&this.vehicle.canOccupy(candidate,rotation)){
+    if(support&&Math.abs(candidate.y-this.location.y)<.18+support.highest-support.average&&this.driveClear(candidate,this.heading)&&this.vehicle.canOccupy(candidate,rotation)){
         // Keep longitudinal motion across the handover. No one-second stop is
         // required, and a held accelerator cannot postpone recovery forever.
         const resumeSpeed=clamp(this.speed,-CAR_REVERSE_SPEED,CAR_FORWARD_SPEED);
@@ -446,7 +451,7 @@ export class CoastalCar {
     const steps=Math.max(1,Math.ceil(distance/.12)),candidate=this.location.clone();
     for(let i=0;i<steps;i++){
       candidate.y=this.location.y-distance/steps;
-      if(!this.staticClear(candidate,this.heading)||!this.vehicle.canOccupy(candidate,this.orientation)){this.fallSpeed=0;break;}
+      if(!this.driveClear(candidate,this.heading)||!this.vehicle.canOccupy(candidate,this.orientation)){this.fallSpeed=0;break;}
       this.location.y=candidate.y;
     }
     this.grounded=Number.isFinite(target)&&Math.abs(this.location.y-target)<.003;
@@ -551,7 +556,8 @@ export class CoastalCar {
     return null;
   }
 
-  private staticClear(position: Vec3, heading: number, props: readonly SceneObstacle[] = this.obstacleProvider()): boolean {
+  private driveClear(position:Vec3,heading:number):boolean{return this.staticClear(position,heading,this.obstacleProvider(),this.physics.handlesPedestrianContacts);}
+  private staticClear(position: Vec3, heading: number, props: readonly SceneObstacle[] = this.obstacleProvider(),allowPedestrians=false): boolean {
     const c = Math.cos(heading), s = Math.sin(heading), ac = Math.abs(c), as = Math.abs(s);
     const extentX = ac * HALF_WIDTH + as * HALF_LENGTH, extentZ = as * HALF_WIDTH + ac * HALF_LENGTH;
     const b = this.world.bounds;
@@ -560,7 +566,7 @@ export class CoastalCar {
     // Match Rapier's contact skin so a settled bumper can return to the road
     // motor instead of treating submillimetre solver contact as penetration.
     CAR_CLEARANCE_BOXES.forEach((part,i)=>orientedCollisionBounds(this.clearanceCenter.copy(part.center).applyQuaternion(this.clearanceRotation).add(position),this.clearanceRotation,{x:part.half.x-.004,y:part.half.y-.004,z:part.half.z-.004},this.clearanceBounds[i]));
-    for(const obstacle of props)if(!obstacle.surface&&this.clearanceBounds.some(part=>obstaclesIntersect(part,obstacle)))return false;
+    for(const obstacle of props)if(!(allowPedestrians&&obstacle.pedestrianId!==undefined)&&!obstacle.surface&&this.clearanceBounds.some(part=>obstaclesIntersect(part,obstacle)))return false;
     const cellProjection = .5 * (ac + as);
     for (let z = Math.floor(position.z - extentZ); z <= Math.floor(position.z + extentZ); z++) for (let x = Math.floor(position.x - extentX); x <= Math.floor(position.x + extentX); x++) {
       const dx = x + .5 - position.x, dz = z + .5 - position.z;

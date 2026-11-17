@@ -2,17 +2,17 @@ import type { SceneObstacle } from '../input/scene-collisions';
 import { Material } from '../world/palette';
 import { regionalHeightAt } from '../world/region-terrain';
 import type { Vector3Like, VoxelWorld } from '../world/voxel';
-import type {TrafficBodyState} from '../destruction/physics';
+import type {TrafficBodyState,PedestrianBodyState} from '../destruction/physics';
 import {Quaternion,Vector3} from 'three';
-import {orientedCollisionBounds,contactSeparates} from '../input/scene-collisions';
+import {orientedCollisionBounds,contactSeparates,obstaclesIntersect} from '../input/scene-collisions';
 import {bypassPose,planTrafficBypass,trafficBounds,trafficBoundsOverlap,type TrafficBypass} from './traffic-bypass';
 import {JunctionFlow} from './junction-flow';
 
-export type LifeContext={focus:Vector3Like;player?:{position:Vector3Like;radius:number};vehicle?:{position:Vector3Like;heading:number;speed:number};night:number;wetness:number;obstacles:readonly SceneObstacle[];obstacleRevision?:number;dynamicObstacles?:readonly SceneObstacle[];trafficPhysics?:readonly TrafficBodyState[]};
+export type LifeContext={focus:Vector3Like;player?:{position:Vector3Like;radius:number};vehicle?:{position:Vector3Like;heading:number;speed:number};night:number;wetness:number;obstacles:readonly SceneObstacle[];obstacleRevision?:number;dynamicObstacles?:readonly SceneObstacle[];trafficPhysics?:readonly TrafficBodyState[];pedestrianPhysics?:readonly PedestrianBodyState[]};
 type P={x:number;z:number};
 export type RoadRoute={id:string;points:P[];lengths:number[];length:number};
 export type LifeCar={id:number;kind:'sedan'|'van'|'bus';route:RoadRoute;distance:number;position:{x:number;y:number;z:number};heading:number;speed:number;maxSpeed:number;length:number;width:number;height:number;waiting:boolean;visible:boolean;braking:boolean;travelled:number;bounds:SceneObstacle;physicsRotation?:TrafficBodyState['rotation'];bypass?:TrafficBypass;bypassYieldAt?:number;nextBypassCheck?:number};
-export type LifePerson={id:number;a:P;b:P;progress:number;direction:number;position:{x:number;y:number;z:number};heading:number;speed:number;pace:number;phase:number;wait:number;blockedFor:number;crossing:boolean;committed:boolean;retreating:boolean;visible:boolean;bounds:SceneObstacle};
+export type LifePerson={id:number;a:P;b:P;progress:number;direction:number;position:{x:number;y:number;z:number};heading:number;speed:number;pace:number;phase:number;wait:number;blockedFor:number;crossing:boolean;committed:boolean;retreating:boolean;visible:boolean;bounds:SceneObstacle;physical?:PedestrianBodyState;rejoining?:boolean};
 export type PedestrianSurface=(x:number,z:number,maxTop:number)=>number|null;
 export const SIGNALS=[{x:130,z:164},{x:176,z:164},{x:84,z:80},{x:130,z:80},{x:176,z:80},{x:222,z:125}] as const;
 export const signalAnchor=(light:P)=>({x:light.x+7,z:light.z+6});
@@ -64,6 +64,7 @@ function carOverlap(position:P,heading:number,width:number,length:number,other:L
 }
 
 export class StreetLifeSimulation{
+  private lastContext:LifeContext|undefined;
   private removedTraffic=new Set<number>();
   private readonly surfaceAt:PedestrianSurface|undefined;
   readonly cars:LifeCar[]=[];
@@ -162,6 +163,11 @@ export class StreetLifeSimulation{
   }
   get diagnostics(){return {cars:this.cars.length,people:this.people.length,movingCars:this.cars.filter(c=>c.visible&&c.speed>.2).length,waitingCars:this.cars.filter(c=>c.visible&&c.waiting).length,detouringCars:this.cars.filter(c=>!!c.bypass).length,walkingPeople:this.people.filter(p=>p.visible&&p.speed>.1).length,waitingPeople:this.people.filter(p=>p.visible&&p.speed<.1).length,signal:signalPhase(this.elapsed),junctions:this.junctions.diagnostics};}
   update(dt:number,context:LifeContext):void{
+    this.lastContext=context;
+    for(const p of this.people){
+      p.physical=context.pedestrianPhysics?.find(s=>s.id===p.id);
+      if(p.physical){const s=p.physical,q=new Quaternion().copy(s.rotation),feet=new Vector3(0,-.88,0).applyQuaternion(q).add(s.position);Object.assign(p.position,feet);p.visible=true;p.speed=s.kind==='stumble'?Math.hypot(s.velocity.x,s.velocity.z):0;orientedCollisionBounds(s.position,q,{x:.28,y:.88,z:.28},p.bounds);}
+    }
     for(const car of this.cars){
       if(this.removedTraffic.has(car.id))continue;
       car.bounds.trafficId=car.id;
@@ -339,6 +345,9 @@ export class StreetLifeSimulation{
     });
   }
   private stepPerson(p:LifePerson,dt:number,context:LifeContext):void{
+    if(p.physical)return;
+    p.bounds.pedestrianHeading=p.heading;
+    if(p.rejoining){this.rejoinPerson(p,dt,context);return;}
     const currentFloor=this.standingAt(p.position.x,p.position.z,p.position.y,true);
     if(currentFloor===null){p.visible=false;p.speed=0;p.bounds.minY=0;p.bounds.maxY=-1;return;}
     p.visible=true;p.position.y=currentFloor;p.speed=0;
@@ -362,5 +371,35 @@ export class StreetLifeSimulation{
     const target=Math.atan2(-(p.b.x-p.a.x)*p.direction,-(p.b.z-p.a.z)*p.direction);p.heading=angle(p.heading+angle(target-p.heading)*(1-Math.exp(-dt*7)));
     if(next<=0||next>=1){p.direction*=-1;p.wait=1.5+(p.id%4)*.7;p.committed=false;p.retreating=false;}
     boundsAt(p.position,0,.55,.55,1.76,p.bounds);
+  }
+  /** Only nearby supported, empty upright space is accepted for getting up. */
+  pedestrianRecoveryPosition(id:number,center:Vector3Like):Vector3Like|null{
+    const person=this.people.find(p=>p.id===id),context=this.lastContext;if(!person||!context)return null;
+    const candidates:Array<{x:number;z:number}>=[];
+    for(let radius=0;radius<=3;radius+=.5)for(let i=0;i<(radius?12:1);i++){const a=i*Math.PI/6;candidates.push({x:center.x+Math.sin(a)*radius,z:center.z+Math.cos(a)*radius});}
+    for(const point of candidates){const y=this.standingAt(point.x,point.z,Math.max(13,center.y),true);if(y===null)continue;
+      const b=orientedCollisionBounds({x:point.x,y:y+.88,z:point.z},new Quaternion(),{x:.29,y:.88,z:.29});
+      if(this.nearbyObstacles(b).some(o=>obstaclesIntersect(b,o))||this.cars.some(c=>c.visible&&obstaclesIntersect(b,c.bounds))||this.people.some(p=>p!==person&&p.visible&&obstaclesIntersect(b,p.bounds)))continue;
+      if(this.vehicleThreatens(b,context)||context.player&&Math.abs(context.player.position.y-y)<1.8&&Math.hypot(point.x-context.player.position.x,point.z-context.player.position.z)<context.player.radius+.4)continue;
+      return{...point,y};
+    }return null;
+  }
+  pedestrianRecovered(id:number,feet:Vector3Like):void{
+    const p=this.people.find(p=>p.id===id);if(!p)return;delete p.physical;Object.assign(p.position,feet);p.speed=0;p.wait=1.1;p.rejoining=true;p.visible=true;p.blockedFor=0;boundsAt(p.position,0,.55,.55,1.76,p.bounds);
+  }
+  private vehicleThreatens(bounds:SceneObstacle,context:LifeContext):boolean{
+    const v=context.vehicle;if(!v)return false;const q=new Quaternion().setFromAxisAngle(new Vector3(0,1,0),v.heading);
+    return obstaclesIntersect(bounds,orientedCollisionBounds({x:v.position.x-Math.sin(v.heading)*v.speed*.5,y:v.position.y,z:v.position.z-Math.cos(v.heading)*v.speed*.5},q,{x:1.15,y:.85,z:2.5+Math.abs(v.speed)*.5}));
+  }
+  private rejoinPerson(p:LifePerson,dt:number,context:LifeContext):void{
+    if(p.wait>0){p.wait-=dt;p.speed=0;return;}
+    const dx=p.b.x-p.a.x,dz=p.b.z-p.a.z,t=clamp(((p.position.x-p.a.x)*dx+(p.position.z-p.a.z)*dz)/(dx*dx+dz*dz),0,1),goal={x:p.a.x+dx*t,z:p.a.z+dz*t},distance=Math.hypot(goal.x-p.position.x,goal.z-p.position.z);
+    if(distance<.04){p.progress=t;p.rejoining=false;return;}
+    const scale=Math.min(1,p.pace*dt/distance),x=p.position.x+(goal.x-p.position.x)*scale,z=p.position.z+(goal.z-p.position.z)*scale,y=this.standingAt(x,z,p.position.y);p.speed=0;if(y===null)return;
+    const b=orientedCollisionBounds({x,y:y+.88,z},new Quaternion(),{x:.275,y:.88,z:.275});
+    if(this.vehicleThreatens(b,context))return;
+    if(this.nearbyObstacles(b,.05).some(o=>obstaclesIntersect(b,o))||this.cars.some(c=>c.visible&&obstaclesIntersect(b,c.bounds))||this.people.some(other=>other!==p&&other.visible&&obstaclesIntersect(b,other.bounds)))return;
+    if(context.player&&Math.hypot(x-context.player.position.x,z-context.player.position.z)<context.player.radius+.4)return;
+    p.heading=Math.atan2(p.position.x-x,p.position.z-z);p.speed=Math.hypot(x-p.position.x,z-p.position.z)/dt;Object.assign(p.position,{x,y,z});boundsAt(p.position,0,.55,.55,1.76,p.bounds);
   }
 }

@@ -17,11 +17,17 @@ import {carveFragment,fragmentBoxes,fragmentCell,raycastFragment,type FragmentBo
 import {trafficMass,boxInertia,type TrafficKind} from '../vehicles/traffic-physics';
 
 export type TrafficBodyState={id:number;position:Vec3;rotation:Quat;linearVelocity:Vec3;angularVelocity:Vec3};
-type ActorEntry={body:RAPIER.RigidBody;collider:RAPIER.Collider;colliders:RAPIER.Collider[];half:Vec3;trafficId?:number;kind?:TrafficKind;dynamic?:boolean;restoreFrames?:number;velocity:Vec3;previousPosition:Vec3;previousRotation:Quat};
+export type PedestrianBodyState={id:number;position:Vec3;rotation:Quat;velocity:Vec3;kind:'stumble'|'fall';phase:'impact'|'rise';age:number};
+export type PedestrianImpact={id:number;speed:number;kind:'stumble'|'fall';player:boolean};
+type PedestrianReaction={kind:'stumble'|'fall';phase:'impact'|'rise';age:number;retry:number;heading:number;from?:Vec3;rotation?:Quat;feet?:Vec3};
+type ActorEntry={body:RAPIER.RigidBody;collider:RAPIER.Collider;colliders:RAPIER.Collider[];half:Vec3;trafficId?:number;kind?:TrafficKind;dynamic?:boolean;restoreFrames?:number;pedestrianId?:number;pedestrianHeading?:number;reaction?:PedestrianReaction;bounds?:SceneObstacle;velocity:Vec3;previousPosition:Vec3;previousRotation:Quat};
 
 type PhysicsCallbacks = {
   onStateChange: (fragments: RubbleFragment[]) => void;
   onImpact?: (position: Vec3, strength: number) => void;
+  onPedestrianImpact?:(impact:PedestrianImpact)=>void;
+  pedestrianRecovery?:(id:number,center:Vec3)=>Vec3|null;
+  onPedestrianRecovered?:(id:number,feet:Vec3)=>void;
 };
 
 type FragmentEntry = {
@@ -110,6 +116,9 @@ function validateFragment(fragment: RubbleFragment): void {
 
 /** Bounded rigid-body simulation; voxel data remain authoritative for static buildings. */
 export class CollapsePhysics {
+  private readonly pedestrianColliders=new Set<number>();
+  get handlesPedestrianContacts(){return !!this.callbacks.onPedestrianImpact;}
+  get hasActivePedestrians(){return this.actors.some(a=>!!a?.reaction);}
   private readonly world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   private readonly events = new RAPIER.EventQueue(true);
   private readonly fragments = new Map<string, FragmentEntry>();
@@ -333,8 +342,9 @@ export class CollapsePhysics {
         let clear = true;
         // Chunk terrain is queried from authoritative voxels by the motor. This
         // query adds current falling/settled debris and other managed vehicles.
-        this.world.intersectionsWithShape(point, rotation, shape, () => { clear = false; return false; }, undefined, undefined, undefined, body, collider => collider.parent() !== null);
-        if(clear)for(const p of CAR_MIRRORS){const center=new Vector3().copy(p.center).applyQuaternion(new Quaternion().copy(rotation)).add(point);this.world.intersectionsWithShape(center,rotation,new RAPIER.Cuboid(p.half.x,p.half.y,p.half.z),()=>{clear=false;return false;},undefined,undefined,undefined,body,c=>c.parent()!==null);if(!clear)break;}
+        const solid=(c:RAPIER.Collider)=>c.parent()!==null&&!(this.handlesPedestrianContacts&&this.pedestrianColliders.has(c.handle));
+        this.world.intersectionsWithShape(point, rotation, shape, () => { clear = false; return false; }, undefined, undefined, undefined, body, solid);
+        if(clear)for(const p of CAR_MIRRORS){const center=new Vector3().copy(p.center).applyQuaternion(new Quaternion().copy(rotation)).add(point);this.world.intersectionsWithShape(center,rotation,new RAPIER.Cuboid(p.half.x,p.half.y,p.half.z),()=>{clear=false;return false;},undefined,undefined,undefined,body,solid);if(!clear)break;}
         return clear;
       },
       hasContact: () => !removed && !this.disposed && colliders.some(collider => this.hasSurfaceContact(collider)),
@@ -360,14 +370,17 @@ export class CollapsePhysics {
       bounds.physicsManaged=true;
       const valid=bounds.maxY>bounds.minY && bounds.maxX>bounds.minX && bounds.maxZ>bounds.minZ && [bounds.minX,bounds.maxX,bounds.minY,bounds.maxY,bounds.minZ,bounds.maxZ].every(Number.isFinite);
       let entry=this.actors[index];
+      if(entry){entry.bounds=bounds;entry.pedestrianHeading=bounds.pedestrianHeading;}
       if(entry?.dynamic)return;
       if(!valid){entry?.body.setEnabled(false);return;}
-      const half=bounds.trafficHalfSize??{x:Math.max(.05,Math.ceil((bounds.maxX-bounds.minX)*10)/20),y:Math.max(.05,Math.ceil((bounds.maxY-bounds.minY)*10)/20),z:Math.max(.05,Math.ceil((bounds.maxZ-bounds.minZ)*10)/20)};
+      const half=bounds.pedestrianId!==undefined&&this.handlesPedestrianContacts?{x:.28,y:.88,z:.28}:bounds.trafficHalfSize??{x:Math.max(.05,Math.ceil((bounds.maxX-bounds.minX)*10)/20),y:Math.max(.05,Math.ceil((bounds.maxY-bounds.minY)*10)/20),z:Math.max(.05,Math.ceil((bounds.maxZ-bounds.minZ)*10)/20)};
       const position={x:(bounds.minX+bounds.maxX)/2,y:(bounds.minY+bounds.maxY)/2,z:(bounds.minZ+bounds.maxZ)/2};
       if(!entry){
         const body=this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(position.x,position.y,position.z));
-        const collider=this.world.createCollider(RAPIER.ColliderDesc.cuboid(half.x,half.y,half.z).setFriction(.8).setRestitution(0),body);
-        entry={body,collider,colliders:[collider],half,trafficId:bounds.trafficId,kind:bounds.trafficKind,velocity:{x:0,y:0,z:0},previousPosition:{...position},previousRotation:{x:0,y:0,z:0,w:1}};this.actors[index]=entry;
+        const descriptor=bounds.pedestrianId!==undefined&&this.handlesPedestrianContacts?RAPIER.ColliderDesc.capsule(.6,.28):RAPIER.ColliderDesc.cuboid(half.x,half.y,half.z);
+        const collider=this.world.createCollider(descriptor.setFriction(.8).setRestitution(0),body);
+        entry={body,collider,colliders:[collider],half,trafficId:bounds.trafficId,kind:bounds.trafficKind,pedestrianId:bounds.pedestrianId,pedestrianHeading:bounds.pedestrianHeading,bounds,velocity:{x:0,y:0,z:0},previousPosition:{...position},previousRotation:{x:0,y:0,z:0,w:1}};this.actors[index]=entry;
+        if(entry.pedestrianId!==undefined)this.pedestrianColliders.add(collider.handle);
         const saved=bounds.trafficId===undefined?undefined:this.restoredTraffic.get(bounds.trafficId);
         if(saved){body.setTranslation(saved.position,false);body.setRotation(saved.rotation,false);this.activateTrafficActor(entry,saved.linearVelocity);entry.restoreFrames=120;entry.body.setAngvel(saved.angularVelocity,true);entry.previousPosition={...saved.position};entry.previousRotation={...saved.rotation};this.restoredTraffic.delete(saved.id);return;}
       }
@@ -377,11 +390,80 @@ export class CollapsePhysics {
       // Navigation owns these accepted poses. They participate in collisions but
       // never join the active rubble budget or the actor's own obstacle provider.
       entry.body.setTranslation(position,true);entry.body.setNextKinematicTranslation(position);
-      if(bounds.trafficHeading!==undefined){const rotation={x:0,y:Math.sin(bounds.trafficHeading/2),z:0,w:Math.cos(bounds.trafficHeading/2)};entry.body.setRotation(rotation,true);entry.body.setNextKinematicRotation(rotation);}
+      const heading=bounds.trafficHeading??bounds.pedestrianHeading;
+      if(heading!==undefined){const rotation={x:0,y:Math.sin(heading/2),z:0,w:Math.cos(heading/2)};entry.body.setRotation(rotation,true);entry.body.setNextKinematicRotation(rotation);}
     });
-    for(let i=obstacles.length;i<this.actors.length;i++)if(this.actors[i])this.world.removeRigidBody(this.actors[i].body);
+    for(let i=obstacles.length;i<this.actors.length;i++)if(this.actors[i]){for(const c of this.actors[i].colliders)this.pedestrianColliders.delete(c.handle);this.world.removeRigidBody(this.actors[i].body);}
     this.actors.length=obstacles.length;
     this.world.propagateModifiedBodyPositionsToColliders();
+  }
+
+  pedestrianSnapshot():PedestrianBodyState[]{
+    return this.actors.filter(a=>a?.reaction).map(a=>({id:a.pedestrianId!,position:{...a.body.translation()},rotation:{...a.body.rotation()},velocity:{...a.body.linvel()},kind:a.reaction!.kind,phase:a.reaction!.phase,age:a.reaction!.age}));
+  }
+  private activatePedestrian(actor:ActorEntry,velocity:Vec3,speed:number,player:boolean):void{
+    const position={...actor.body.translation()},yaw=actor.pedestrianHeading??0,rotation=actor.reaction?{...actor.body.rotation()}:{x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},kind=speed<3?'stumble':'fall';
+    for(const c of actor.colliders)this.pedestrianColliders.delete(c.handle);this.world.removeRigidBody(actor.body);
+    const body=this.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(position.x,position.y,position.z).setRotation(rotation).setLinearDamping(1.2).setAngularDamping(.8).setCcdEnabled(true).setAdditionalSolverIterations(4));
+    if(kind==='stumble')body.lockRotations(true,true);
+    const collider=this.world.createCollider(RAPIER.ColliderDesc.capsule(.6,.28).setMass(70).setFriction(.08).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min).setRestitution(.02),body);
+    actor.body=body;actor.collider=collider;actor.colliders=[collider];actor.dynamic=true;actor.reaction={kind,phase:'impact',age:0,retry:0,heading:yaw};actor.half={x:.28,y:.88,z:.28};this.pedestrianColliders.add(collider.handle);
+    const length=Math.hypot(velocity.x,velocity.z)||1,side=(actor.pedestrianId!%2?1:-1),factor=Math.min(.5,7/length);
+    const sidestep=kind==='fall'?4:2.8;
+    body.setLinvel({x:velocity.x*factor+velocity.z/length*side*sidestep,y:kind==='fall'?.7:0,z:velocity.z*factor-velocity.x/length*side*sidestep},true);
+    if(kind==='fall')body.setAngvel({x:-velocity.x/length*side*4,y:0,z:-velocity.z/length*side*4},true);
+    this.callbacks.onPedestrianImpact?.({id:actor.pedestrianId!,speed,kind,player});
+  }
+  /** Test current and swept contact before solving. A contacted person becomes
+   * a finite-mass body instead of an immovable navigation obstacle. */
+  private detectPedestrianContacts(dt:number):void{
+    if(!this.handlesPedestrianContacts)return;
+    const sources=[...[...this.vehicles].filter(v=>v.kind==='car'&&v.active).map(v=>({body:v.body,colliders:v.colliders,player:true,motion:undefined as Vec3|undefined})),...this.actors.filter(a=>a?.trafficId!==undefined&&a.body.isEnabled()).map(a=>({body:a.body,colliders:a.colliders,player:false,motion:a.body.isKinematic()?a.velocity:undefined}))];
+    for(const actor of this.actors){
+      if(!actor||actor.pedestrianId===undefined||actor.reaction?.phase==='impact'||!actor.body.isEnabled())continue;
+      const at=actor.body.translation();
+      for(const source of sources){
+        const p=source.body.translation(),next=source.motion?new Vector3().copy(p).addScaledVector(source.motion,dt):source.body.isKinematic()?source.body.nextTranslation():new Vector3().copy(p).addScaledVector(source.body.linvel(),dt),velocity={x:(next.x-p.x)/dt,y:0,z:(next.z-p.z)/dt},speed=Math.hypot(velocity.x-actor.velocity.x,velocity.z-actor.velocity.z);
+        if(Math.hypot(velocity.x,velocity.z)<.25||speed<.25||Math.hypot(p.x-at.x,p.z-at.z)>6+Math.hypot(next.x-p.x,next.z-p.z)||Math.abs(p.y-at.y)>2.5||velocity.x*(at.x-p.x)+velocity.z*(at.z-p.z)<-.1)continue;
+        const steps=Math.min(16,Math.max(1,Math.ceil(Math.hypot(next.x-p.x,next.z-p.z)/.18))),fromQ=new Quaternion().copy(source.body.rotation()),toQ=new Quaternion().copy(source.body.isKinematic()?source.body.nextRotation():source.body.rotation());let hit=false;
+        for(let i=0;i<=steps&&!hit;i++)for(const c of source.colliders){const q=fromQ.clone().slerp(toQ,i/steps);
+          const center=new Vector3().copy(c.translationWrtParent()??{x:0,y:0,z:0}).applyQuaternion(q).add({x:p.x+(next.x-p.x)*i/steps,y:p.y+(next.y-p.y)*i/steps,z:p.z+(next.z-p.z)*i/steps});
+          const rotation=q.clone().multiply(new Quaternion().copy(c.rotationWrtParent()??{x:0,y:0,z:0,w:1})),contact=actor.collider.contactShape(c.shape,center,rotation,.015);
+          if(contact&&contact.distance<=.015){hit=true;break;}
+        }
+        if(!hit)continue;
+        this.activatePedestrian(actor,velocity,speed,source.player);
+        if(source.body.isDynamic()){const mass=source.body.mass(),factor=Math.min(.08,35/Math.max(1,mass));source.body.applyImpulse({x:-velocity.x*mass*factor,y:0,z:-velocity.z*mass*factor},true);}
+        break;
+      }
+    }
+  }
+  private pedestrianRisePose(r:PedestrianReaction,t:number):{position:Vector3;rotation:Quaternion}{
+    const u=t*t*(3-2*t),rotation=new Quaternion().copy(r.rotation!).slerp(new Quaternion(0,Math.sin(r.heading/2),0,Math.cos(r.heading/2)),u),position=new Vector3().copy(r.from!).lerp({x:r.feet!.x,y:r.feet!.y+.88,z:r.feet!.z},u),axis=new Vector3(0,1,0).applyQuaternion(rotation);
+    position.y=Math.max(position.y,r.feet!.y+.28+.6*Math.abs(axis.y)+.008);return{position,rotation};
+  }
+  private pedestrianPoseClear(actor:ActorEntry,position:Vec3,rotation:Quat):boolean{
+    let clear=true;this.world.intersectionsWithShape(position,rotation,actor.collider.shape,c=>{const hit=c.contactShape(actor.collider.shape,position,rotation,0);if(hit&&hit.distance<-.025){clear=false;return false;}return true;},undefined,undefined,undefined,actor.body);return clear;
+  }
+  private updatePedestrians(dt:number):void{
+    for(const a of this.actors){const r=a?.reaction;if(!r)continue;r.age+=dt;
+      if(r.phase==='rise'){
+        const pose=this.pedestrianRisePose(r,Math.min(1,r.age/.85));a.body.setTranslation(pose.position,true);a.body.setRotation(pose.rotation,true);a.body.setNextKinematicTranslation(pose.position);a.body.setNextKinematicRotation(pose.rotation);
+        if(r.age>=.85){a.dynamic=false;delete a.reaction;a.body.setLinvel({x:0,y:0,z:0},false);a.body.setAngvel({x:0,y:0,z:0},false);this.callbacks.onPedestrianRecovered?.(a.pedestrianId!,r.feet!);}
+      }else{
+        const v=a.body.linvel(),length=magnitude(v);if(length>32)a.body.setLinvel(new Vector3().copy(v).multiplyScalar(32/length),true);
+        r.retry-=dt;
+        if(r.age>(r.kind==='stumble'?1:2.4)&&r.retry<=0){r.retry=.5;const feet=this.callbacks.pedestrianRecovery?.(a.pedestrianId!,a.body.translation());
+          const touchingVehicle=[...[...this.vehicles].filter(v=>v.kind==='car').map(v=>({body:v.body,colliders:v.colliders,velocity:v.body.linvel()})),...this.actors.filter(other=>other?.trafficId!==undefined).map(other=>({body:other.body,colliders:other.colliders,velocity:other.velocity}))].some(v=>magnitude(v.velocity)>.25&&v.colliders.some(c=>{const contact=c.contactCollider(a.collider,.25);return contact&&contact.distance<.25;}));
+          if(touchingVehicle)continue;
+          if(feet){const proposed={...r,from:{...a.body.translation()},rotation:{...a.body.rotation()},feet};let clear=true;
+            for(let i=1;i<=10&&clear;i++){const pose=this.pedestrianRisePose(proposed,i/10);clear=this.pedestrianPoseClear(a,pose.position,pose.rotation);}
+            if(clear){Object.assign(r,proposed,{phase:'rise',age:0});a.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased,true);a.body.setLinvel({x:0,y:0,z:0},false);a.body.setAngvel({x:0,y:0,z:0},false);}
+          }
+        }
+      }
+      if(a.bounds)orientedCollisionBounds(a.body.translation(),a.body.rotation(),a.half,a.bounds);
+    }
   }
 
   private activateTrafficActor(actor:ActorEntry,velocity:Vec3):void{
@@ -399,7 +481,7 @@ export class CollapsePhysics {
   /** A car already sliding, or traffic struck by another crashed car, must not
    * hit an infinite-mass navigation body on the following contact. */
   private promoteApproachingTraffic(dt:number):void{
-    const moving=[...[...this.vehicles].filter(v=>v.kind==='car'&&v.body.isDynamic()).map(v=>({body:v.body,colliders:v.colliders})),...this.actors.filter(a=>a?.dynamic)];
+    const moving=[...[...this.vehicles].filter(v=>v.kind==='car'&&v.body.isDynamic()).map(v=>({body:v.body,colliders:v.colliders})),...this.actors.filter(a=>a?.dynamic&&a.trafficId!==undefined)];
     const pending=new Set<ActorEntry>();
     for(const actor of this.actors){
       if(!actor||actor.dynamic||actor.trafficId===undefined||!actor.body.isEnabled())continue;
@@ -522,11 +604,13 @@ export class CollapsePhysics {
     while (this.accumulator >= STEP && substeps++ < MAX_SUBSTEPS) {
       for(const actor of this.actors)if(actor?.dynamic){actor.previousPosition={...actor.body.translation()};actor.previousRotation={...actor.body.rotation()};}
       for (const vehicle of this.vehicles) if (vehicle.active) vehicle.beforeStep(STEP);
+      this.detectPedestrianContacts(STEP);
       this.promoteApproachingTraffic(STEP);
       for (const entry of this.fragments.values()) {
         if (entry.source.state === 'falling') entry.previousVerticalVelocity = entry.body.linvel().y;
       }
       this.world.step(this.events);
+      this.updatePedestrians(STEP);
       this.terrainPending=false;
       this.separateRestoredWrecks();
       this.elapsed += STEP;

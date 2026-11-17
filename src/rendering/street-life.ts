@@ -152,7 +152,8 @@ export class StreetLife{
     }
     this.physicalCarRotation=null;
     this.renderedPeople.length=0;
-    for(const p of this.simulation.people)if(p.visible&&Math.hypot(p.position.x-context.focus.x,p.position.z-context.focus.z)<Math.max(150,context.focus.y*2)){this.person(p,context.wetness);this.renderedPeople.push(p);}
+    for(const p of this.simulation.people)if(p.visible&&Math.hypot(p.position.x-context.focus.x,p.position.z-context.focus.z)<Math.max(150,context.focus.y*2)){this.physicalCarRotation=p.physical?new Quaternion().copy(p.physical.rotation):null;this.person(p,context.wetness);this.renderedPeople.push(p);}
+    this.physicalCarRotation=null;
     this.signals();
     this.batches.get('headlights')!.material.emissiveIntensity=.1+context.night*2.1;
     this.batches.get('brakes')!.material.emissiveIntensity=.25+context.night*2.2;
@@ -190,13 +191,13 @@ export class StreetLife{
     const {x,y,z}=p.position,motion=this.peopleMotion[p.id],{swing,stride,yaw}=motion;
     const coat=COATS[p.id%COATS.length],skin=SKINS[p.id%SKINS.length],trim=TRIMS[p.id%TRIMS.length],pants=TROUSERS[p.id%TROUSERS.length];
     const style=p.id%4,build=[.965,1,.985,1.01][p.id%4],width=[.385,.405,.42,.415][style],shoulder=width/2+.036;
-    const rain=wetness>.15&&p.id%5!==0;
+    const rain=wetness>.15&&p.id%5!==0&&!p.physical;
     const legs=[0,1].map(i=>{
-      const phase=stride+i*Math.PI,hip=Math.sin(phase)*.37*swing,knee=-.025-Math.max(0,Math.cos(phase))*.63*swing;
+      const phase=stride+i*Math.PI,fall=p.physical?.kind==='fall',hip=fall?.45:Math.sin(phase)*.37*swing,knee=fall?-.85:-.025-Math.max(0,Math.cos(phase))*.63*swing;
       const kneeY=.87-.37*Math.cos(hip),kneeZ=-.37*Math.sin(hip);
       return {hip,knee,kneeY,kneeZ,ankleY:kneeY-.36*Math.cos(hip+knee),ankleZ:kneeZ-.36*Math.sin(hip+knee)};
     });
-    const lift=.14-Math.min(...legs.map(leg=>leg.ankleY));
+    const lift=p.physical?0:.14-Math.min(...legs.map(leg=>leg.ankleY));
     const part=(name:string,lx:number,ly:number,lz:number,sx:number,sy:number,sz:number,pitch=0,color?:string)=>this.part(name,x,y,z,yaw,lx*build,(ly+lift)*build,lz*build,sx*build,sy*build,sz*build,pitch,color);
     // Four cuts change the silhouette as well as the colour: field jacket, coat,
     // hoodie and harbour workwear. All use the same instanced material batches.
@@ -240,8 +241,8 @@ export class StreetLife{
       part('rubber',side*.097,ankleY-.063,ankleZ-.035,.17,.123,.275);
       part('rubber',side*.097,ankleY-.1325,ankleZ-.04,.18,.015,.29);
       const contact=Math.max(0,1-(ankleY+lift-.14)*build/.15);
-      if(contact>.01)this.part('person-contact',x,y,z,yaw,side*.097,.012,ankleZ-.04,.29*contact,1,.35*contact);
-      const arm=-hip*.68,elbow=arm+.12;
+      if(contact>.01&&!p.physical)this.part('person-contact',x,y,z,yaw,side*.097,.012,ankleZ-.04,.29*contact,1,.35*contact);
+      const arm=p.physical?(p.physical.kind==='fall'?.9:.45):-hip*.68,elbow=arm+.12;
       let elbowY=1.365-.26*Math.cos(arm),elbowZ=-.26*Math.sin(arm);
       let handY=elbowY-.25*Math.cos(elbow),handZ=elbowZ-.25*Math.sin(elbow),upperPitch=arm,lowerPitch=elbow;
       if(rain&&side===1){
