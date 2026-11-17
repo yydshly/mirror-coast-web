@@ -2,9 +2,10 @@ import {REGION_BOUNDS,REGION_ROADS,REGION_PLACES} from '../world/region-layout';
 import {EXPLORATION_SITES} from '../world/exploration-sites';
 import {FOREST_WALK,OUTER_STOPS} from './coast-signals';
 import {BAY_STOPS,BAY_BEACH_WALK} from './south-bay';
+import {BOAT_LANDINGS} from '../route/boat-route';
 
 export type MapPoint={x:number;z:number};
-export type NavigationMode='walk'|'car'|'helicopter'|'fly'|'bicycle';
+export type NavigationMode='walk'|'car'|'helicopter'|'fly'|'bicycle'|'boat';
 export type Destination={id:string;name:string;shortName:string;position:MapPoint;kind:'district'|'activity'|'vehicle';description:string;access:string;approach?:MapPoint;trail?:readonly MapPoint[]};
 const notes:Record<string,[string,string,string]>={
  'east-port':['东港','逛货运码头、厂房与集装箱街区。','驾车沿东港大道前往，到港区后停车步行。'],
@@ -30,6 +31,8 @@ export const MAP_DESTINATIONS:readonly Destination[]=[
  {id:'harbor-log',name:'渔港西栈桥 · 航路记录',shortName:'清障通路',position:{x:-10,z:232.5},kind:'activity',description:'木箱挡住了一条支栈桥。清出两格宽的通路，走到海边查看记录，接着去南湾与西岬。重新进入后，清出的路和航标的变化都会保留。',access:'2 挖除，瞄准木箱点击；保留脚下木板，1 返回观察。走到记录台附近按 E。3 爆破会损坏栈桥，请自行选择。',approach:harborTrail[0],trail:[...harborTrail,{x:8,z:232.5},{x:-10,z:232.5}]},
  ...REGION_PLACES.map(p=>({id:p.id,name:p.name,shortName:notes[p.id][0],position:p.position,kind:'district' as const,description:notes[p.id][1],access:notes[p.id][2]})),
  ...EXPLORATION_SITES.map(p=>({id:p.id,name:p.title,shortName:p.id==='forest-radio'?'电台':p.id==='tidal-rescue'?'救援船':'旧航标',position:p.position,kind:'activity' as const,description:p.description,access:`${p.actionHint}：停车后沿绿色虚线步行，靠近装置按 E 调查。`,approach:p.approach,trail:[...p.route,p.position]})),
+ ...BOAT_LANDINGS.map(l=>({id:l.id,name:l.name,shortName:l.shortName,position:{x:l.x,z:l.endZ-1},kind:'district' as const,description:'低位木栈桥连接现有岸上道路与可航行水面。可在这里靠泊、下船步行，或从岸边再次出航。',access:'靠近栈桥一侧，提前松开 W、Space 减速。停稳后 F / E 上岸；步行到船旁按 E 驾驶。',approach:{x:l.x,z:l.z},trail:[{x:l.x,z:l.z},{x:l.x,z:l.endZ-1}]})),
+ {id:'boat',name:'海岸小艇',shortName:'小艇',position:{x:119.7,z:224.8},kind:'vehicle',description:'一艘可驾驶的小型动力艇。码头、南湾和西岬有低位靠泊栈桥，可以下船接着探索。',access:'在码头小艇栈桥走下木阶，到船旁按 E；也可点击顶部「小艇」。W / S 航行与倒航，A / D 操舵，Space 减速，靠岸停稳后 F 上岸。',approach:{x:116,z:214.5},trail:[{x:116,z:214.5},{x:116,z:225}]},
  {id:'car',name:'旅行车',shortName:'汽车',position:{x:248,z:164},kind:'vehicle',description:'找到当前停放的旅行车，接着沿道路探索外围。',access:'步行到车旁按 E 接管；也可使用顶部「汽车」。W/S 前进与倒车，A/D 转向。'},
  {id:'helicopter',name:'直升机',shortName:'直升机',position:{x:108,z:209},kind:'vehicle',description:'找到直升机，自由飞行，或开启近岸自动导览。',access:'到机旁按 E 接管；也可点击顶部「直升机」。Space 上升，Shift 下降。',approach:{x:108,z:164},trail:[{x:108,z:164},{x:108,z:209}]},
 ];

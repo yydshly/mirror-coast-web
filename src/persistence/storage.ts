@@ -30,6 +30,7 @@ export type PlayerState = {
   view?: 'first' | 'third';
   car?: CarState;
   bicycle?:import('../vehicles/bicycle').BicycleState;
+  boat?:import('../vehicles/coastal-boat').BoatState;
   discoveries?: DiscoveryId[];
   navigationTarget?:string;
   posture?:{kind:'seated';seatId:string};
@@ -123,6 +124,7 @@ function validatePlayer(value: unknown): PlayerState {
     if(value.car.rigidBody!==undefined){const motion=validateRigidMotion({...isRecord(value.car.rigidBody)?value.car.rigidBody:{},position});result.car.rigidBody={rotation:motion.rotation,linearVelocity:motion.linearVelocity,angularVelocity:motion.angularVelocity};}
   }
   if(value.bicycle!==undefined){if(!isRecord(value.bicycle))throw new Error('自行车存档格式无效。');const position=validateVector(value.bicycle.position),heading=value.bicycle.heading,riding=value.bicycle.riding;if(Object.values(position).some(v=>Math.abs(v)>4096)||typeof heading!=='number'||!Number.isFinite(heading)||Math.abs(heading)>100||typeof riding!=='boolean')throw new Error('自行车存档姿态无效。');result.bicycle={position,heading,riding};}
+  if(value.boat!==undefined){if(!isRecord(value.boat))throw new Error('小艇存档格式无效。');const position=validateVector(value.boat.position),heading=value.boat.heading,piloting=value.boat.piloting;if(Object.values(position).some(v=>Math.abs(v)>4096)||typeof heading!=='number'||!Number.isFinite(heading)||Math.abs(heading)>100||typeof piloting!=='boolean')throw new Error('小艇存档姿态无效。');result.boat={position,heading,piloting};}
   if(value.props!==undefined){
     if(!Array.isArray(value.props)||value.props.length>4096)throw new Error('装饰物存档数量无效。');
     const ids=new Set<string>();result.props=value.props.map(p=>{if(!isRecord(p)||typeof p.id!=='string'||p.id.length>4000||!p.id.length||ids.has(p.id))throw new Error('装饰物编号无效。');ids.add(p.id);if(p.sleeping!==undefined&&typeof p.sleeping!=='boolean')throw new Error('装饰物静止状态无效。');return{id:p.id,...validateRigidMotion(p),...p.sleeping!==undefined?{sleeping:p.sleeping}:{}};});
@@ -146,6 +148,7 @@ function validatePlayer(value: unknown): PlayerState {
 }
 
 function clonePlayer(value: PlayerState): PlayerState {
+  if(value.boat)value={...value,boat:{...value.boat,position:{...value.boat.position}}};
   if(value.removedTraffic)value={...value,removedTraffic:[...value.removedTraffic]};
   if(value.coast)value={...value,coast:validateCoastOuting(value.coast)};
   if(value.bicycle)value={...value,bicycle:{...value.bicycle,position:{...value.bicycle.position}}};

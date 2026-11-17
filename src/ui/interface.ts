@@ -1,5 +1,6 @@
 import type {CarViewState} from '../vehicles/coastal-car';
 import type {BicycleViewState} from '../vehicles/bicycle';
+import type {BoatViewState} from '../vehicles/coastal-boat';
 import {carFeedback} from '../vehicles/vehicle-feedback';
 import type { HelicopterViewState } from '../vehicles/types';
 import { COAST_ROUTE } from '../route/coast-route';
@@ -38,6 +39,8 @@ type Callbacks = {
   onReturnToPad?:()=>void;
   onBicycle?:()=>void;
   onExitBicycle?:()=>void;
+  onBoat?:()=>void;
+  onExitBoat?:()=>void;
   onAutopilot?: () => void;
   onStartTour?: () => void;
   onRecord?: () => void;
@@ -124,6 +127,7 @@ export class Interface {
   private vehicleState: HelicopterViewState | undefined;
   private lastHelpMode = '';
   private bicycleState:BicycleViewState|undefined;
+  private boatState:BoatViewState|undefined;
   private walking = false;
   private walkView: 'first' | 'third' = 'third';
   private mouseMode: 'locked' | 'drag' | 'paused' = 'paused';
@@ -177,6 +181,7 @@ export class Interface {
           <button data-action="walk" data-mode="walk" aria-label="步行探索" aria-pressed="false" title="地面步行 · 身体碰撞">步行</button>
           <button data-action="drive" data-mode="car" aria-label="驾驶海岸汽车" aria-pressed="false" hidden>汽车</button>
           <button data-action="bicycle" data-mode="bicycle" aria-label="骑自行车" aria-pressed="false">自行车</button>
+          <button data-action="boat" data-mode="boat" aria-label="驾驶海岸小艇" aria-pressed="false">小艇</button>
           <button data-action="pilot" data-mode="helicopter" aria-label="驾驶直升机" aria-pressed="false">直升机</button>
           <button data-action="free-fly" data-mode="fly" aria-label="自由镜头" aria-pressed="true" title="空中观察 · 地表防穿透">自由镜头</button>
         </nav>
@@ -220,6 +225,13 @@ export class Interface {
       </section>
 
       <section class="mc-region-map mc-panel"></section>
+
+      <section class="mc-boat-panel mc-panel" aria-label="海岸小艇" hidden>
+        <div class="mc-car-heading"><div><span>COASTAL WATERWAY</span><b>沿岸航行</b></div><div class="mc-car-speed"><b data-boat-speed>0</b><small>km/h</small></div></div>
+        <p data-boat-status>码头出发 · 南湾与西岬可靠泊</p>
+        <div class="mc-vehicle-actions"><button data-action="exit-boat">靠岸上岸 · F</button><button data-action="reset-look">视角回正 · R</button><button data-action="recover-vehicle">脱困 · G</button><button data-action="record-flight">录制</button></div>
+        <small>W / S 前进与倒航 · A / D 舵向 · Space 减速<br>鼠标拖动环视 · M 查看靠泊点 · F / E 停稳上岸</small>
+      </section>
 
       <section class="mc-collapse-controls mc-panel" aria-label="建筑坍塌">
         <span class="mc-collapse-eyebrow">DESTRUCTION STUDY — 002</span>
@@ -367,6 +379,8 @@ export class Interface {
         if (action === 'return-pad') this.callbacks.onReturnToPad?.();
         if (action === 'bicycle') this.callbacks.onBicycle?.();
         if (action === 'exit-bicycle') this.callbacks.onExitBicycle?.();
+        if (action === 'boat') this.callbacks.onBoat?.();
+        if (action === 'exit-boat') this.callbacks.onExitBoat?.();
         if (action === 'tour') this.openTour();
         if (action === 'close-tour') this.closeTour();
         if (action === 'start-tour') { this.closeTour(); if(this.callbacks.onStartTour)this.callbacks.onStartTour();else this.callbacks.onAutopilot?.(); }
@@ -582,13 +596,16 @@ export class Interface {
   private updateExplorationPanels(): void {
     const state=explorationPresentation({walking:this.walking,piloting:!!this.vehicleState?.piloting,driving:!!this.carState?.driving,vehicleAvailable:this.vehicleAvailable,carAvailable:this.carAvailable});
     const cycling=!!this.bicycleState?.riding;
-    this.require('.mc-street-panel').hidden = cycling||!state.street;
-    this.require('.mc-observer-panel').hidden = cycling||!state.observer;
-    this.require('.mc-car-panel').hidden = cycling||!state.car;
-    this.require('.mc-vehicle-panel').hidden = cycling||!state.helicopter;
-    this.require('.mc-bicycle-panel').hidden=!cycling;
+    const boating=!!this.boatState?.piloting;
+    this.require('.mc-street-panel').hidden = boating||cycling||!state.street;
+    this.require('.mc-observer-panel').hidden = boating||cycling||!state.observer;
+    this.require('.mc-car-panel').hidden = boating||cycling||!state.car;
+    this.require('.mc-vehicle-panel').hidden = boating||cycling||!state.helicopter;
+    this.require('.mc-bicycle-panel').hidden=boating||!cycling;
+    this.require('.mc-boat-panel').hidden=!boating;
+    this.element.classList.toggle('is-boating',boating);
     this.element.classList.toggle('is-cycling',cycling);
-    const mode:ControlMode=cycling?'bicycle':state.mode;
+    const mode:ControlMode=boating?'boat':cycling?'bicycle':state.mode;
     this.recordingPanel.setMode(mode);
     this.element.dataset.mode=mode;
     this.element.classList.toggle('is-walking',state.street);
@@ -607,6 +624,7 @@ export class Interface {
   }
 
   setBicycleState(state:BicycleViewState):void{const changed=this.bicycleState?.riding!==state.riding;this.bicycleState={...state};this.require('[data-bicycle-speed]').textContent=`${Math.round(Math.abs(state.speed)*3.6)} km/h`;this.require('[data-bicycle-status]').textContent=state.blocked||'W 蹬车 · S 制动 / 退行 · A / D 转向 · Space 刹车';if(changed){this.updateExplorationPanels();this.updateHelp();this.updateFlightHint();}}
+  setBoatState(state:BoatViewState):void{const changed=this.boatState?.piloting!==state.piloting;this.boatState={...state};this.require('[data-boat-speed]').textContent=String(Math.round(Math.abs(state.speed)*3.6));this.require('[data-boat-status]').textContent=state.status;if(state.piloting)this.hasFlown=true;if(changed){this.require('.mc-return-pad').innerHTML=state.piloting?'直升机返航 <kbd>H</kbd>':'自动返航 <kbd>H</kbd>';this.updateExplorationPanels();this.updateHelp();this.updateFlightHint();this.updateIntro();}}
 
   setVehicleState(state: HelicopterViewState): void {
     const wasPiloting = this.vehicleState?.piloting ?? false;
@@ -794,6 +812,7 @@ export class Interface {
 
   private updateFlightHint(): void {
     const recovery='<span>·</span><kbd>G</kbd> 脱困';
+    if(this.boatState?.piloting){this.flightHint.innerHTML='<kbd>W / S</kbd> 航行 / 倒航<span>·</span><kbd>A / D</kbd> 舵向<span>·</span><kbd>Space</kbd> 减速<span>·</span><kbd>F</kbd> 靠岸上岸'+recovery;return;}
     if(this.bicycleState?.riding){this.flightHint.innerHTML='<kbd>W</kbd> 蹬车<span>·</span><kbd>Space</kbd> 刹车<span>·</span><kbd>F / E</kbd> 下车<span>·</span><kbd>M</kbd> 地图'+recovery;return;}
     if (this.carState?.driving) { this.flightHint.innerHTML = '<kbd>W / S</kbd> 油门 / 倒车<span>·</span><kbd>A / D</kbd> 转向<span>·</span><kbd>Esc</kbd> 下车'+recovery; return; }
     if (this.vehicleState?.piloting) { this.flightHint.innerHTML=(this.vehicleState.autopilot?(this.vehicleState.flightMode==='return'?'自动返航中<span>·</span>飞行按键接管<span>·</span>停稳后 <kbd>F</kbd> 下机':'鼠标拖动环视<span>·</span>暂停游览可悬停<span>·</span><kbd>H</kbd> 自动返航'):this.vehicleState.grounded?'<kbd>Space</kbd> 升空<span>·</span><kbd>F</kbd> 下机<span>·</span><kbd>H</kbd> 自动返航':'<kbd>Shift</kbd> 下降落地后 F 下机<span>·</span><kbd>H</kbd> 自动返航')+recovery;return; }
@@ -848,11 +867,12 @@ export class Interface {
   get isMapOpen():boolean{return this.regionMap.isOpen;}
 
   private updateHelp(): void {
-    const mode = this.bicycleState?.riding?'bicycle':this.carState?.driving ? 'drive' : this.vehicleState?.piloting ? 'pilot' : this.walking ? 'walk' : this.vehicleAvailable ? 'coast' : 'observe';
+    const mode = this.boatState?.piloting?'boat':this.bicycleState?.riding?'bicycle':this.carState?.driving ? 'drive' : this.vehicleState?.piloting ? 'pilot' : this.walking ? 'walk' : this.vehicleAvailable ? 'coast' : 'observe';
     if (mode === this.lastHelpMode) return;
     this.lastHelpMode = mode;
     const controls = this.require('.mc-controls');
-    if(mode==='bicycle'){this.require('#mc-help-title').textContent='沿海慢骑，也可以停下来。';this.require('.mc-help p').textContent='W 蹬车，S 制动后退行，Space 刹车。平坦水线沙地可以骑行；前方深水会停住，按 S 退回岸边，G 挪到安全岸地或道路。F / E 停稳下车后继续步行。鼠标拖动只环视，不改变车头方向。';}
+    if(mode==='boat'){this.require('#mc-help-title').textContent='从码头，沿海岸出航。';this.require('.mc-help p').textContent='W 加速，S 制动后倒航，A / D 操舵，Space 减速。船有惯性，提前收油靠泊。M 查看码头、南湾和西岬栈桥；靠岸停稳后 F / E 上岸。深水中不能直接下船；浅滩受阻可 S 退回，G 脱困。鼠标拖动环视，R 回正。';}
+    else if(mode==='bicycle'){this.require('#mc-help-title').textContent='沿海慢骑，也可以停下来。';this.require('.mc-help p').textContent='W 蹬车，S 制动后退行，Space 刹车。平坦水线沙地可以骑行；前方深水会停住，按 S 退回岸边，G 挪到安全岸地或道路。F / E 停稳下车后继续步行。鼠标拖动只环视，不改变车头方向。';}
     else if (mode === 'drive') {
       this.require('#mc-help-title').textContent = '沿着公路，开向海岸。';
       this.require('.mc-help p').textContent = '旧城、工业港、山麓社区与海岬由真实道路相连。按 M 查看导航；停车下车后可以继续步行探索。深水无法行驶，请倒车回岸；已入水、卡住或侧翻时按 G，将汽车扶正到道路或岸上。';
@@ -866,7 +886,7 @@ export class Interface {
       this.require('#mc-help-title').textContent = this.vehicleAvailable ? '从码头，出发。' : '从海岸，出发。';
       this.require('.mc-help p').textContent = '自由镜头悬浮观察，WASD 水平移动，Space / E 上升、Q 下降；地面和建筑会挡住镜头。地面探索请选择顶部「步行」。鼠标锁定时直接移动转向，未锁定时左拖或右拖转向；挖除、爆破用左键点按或长按。';
     }
-    const guideMode:ControlMode=mode==='bicycle'?'bicycle':mode==='drive'?'car':mode==='pilot'?'helicopter':mode==='walk'?'walk':'fly';
+    const guideMode:ControlMode=mode==='boat'?'boat':mode==='bicycle'?'bicycle':mode==='drive'?'car':mode==='pilot'?'helicopter':mode==='walk'?'walk':'fly';
     const guide=[...controlGuide(guideMode),{keys:'鼠标',action:guideMode==='walk'||guideMode==='fly'?'锁定时移动转向；未锁定时左拖 / 右拖转向':'左拖 / 右拖环视；滚轮缩放'},{keys:'M / J',action:'区域地图 / 海岸手记'},{keys:'Tab',action:'打开 / 关闭当前模式说明'},{keys:'F9',action:'录制设置 / 停止并保存'},{keys:'F8',action:'收起 / 显示常规界面'}];
     controls.replaceChildren(...guide.filter(c=>c.keys!=='M / J'||!this.element.classList.contains('is-lab')).map(({keys,action})=>{const row=document.createElement('div'),term=document.createElement('dt'),key=document.createElement('kbd'),description=document.createElement('dd');key.textContent=keys;term.append(key);description.textContent=action;row.append(term,description);return row;}));
   }

@@ -1,12 +1,13 @@
 import {
   BackSide,DoubleSide, Color, DataTexture, DirectionalLight, FogExp2, HemisphereLight, LinearFilter,
   Mesh, PlaneGeometry, RingGeometry,PMREMGenerator, RedFormat, Scene, ShaderMaterial,
-  SphereGeometry, UnsignedByteType, Vector2, Vector3, type WebGLCubeRenderTarget, type WebGLRenderer,type Camera,
+  SphereGeometry, UnsignedByteType, Vector2, Vector3,Vector4, type WebGLCubeRenderTarget, type WebGLRenderer,type Camera,
 } from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { DEFAULT_WORLD_BOUNDS, type VoxelWorld, type WorldBounds } from '../world/voxel';
 import {ShadowCadence} from './shadow-cadence';
 import {SEA_LEVEL} from '../world/sea-level';
+import {waterSurfaceHeight} from './water-surface';
 
 /** One coherent sun/sky/water system. Reflection probes contain only the sky. */
 export class Environment {
@@ -43,6 +44,12 @@ export class Environment {
   private fogScale = 1;
   private underwater=false;
   get isUnderwater(){return this.underwater;}
+  setBoatWake(position:{x:number;z:number},heading:number,speed:number):void{this.sea.material.uniforms.uBoatWake.value.set(position.x,position.z,heading,Math.max(0,speed));}
+  waterHeightAt(x:number,z:number):number{
+    const b=this.terrainBounds,ix=Math.floor(x)-b.minX,iz=Math.floor(z)-b.minZ,width=b.maxX-b.minX;
+    const bed=ix>=0&&ix<width&&iz>=0&&iz<b.maxZ-b.minZ?this.bathymetry[ix+iz*width]??0:0;
+    return waterSurfaceHeight(x,z,this.elapsed,bed,this.wetness.value);
+  }
   setCameraPosition(position:{y:number}):void{
     const underwater=position.y<SEA_LEVEL+(this.underwater?.05:-.1);
     if(underwater!==this.underwater){this.underwater=underwater;this.applyAtmosphere();}
@@ -83,6 +90,7 @@ export class Environment {
         uHorizon: { value: new Color('#b9c5c8') }, uTerrain: { value: this.terrain },
         uOrigin: { value: new Vector2() }, uSize: { value: new Vector2(256,256) },
         uFogDensity: { value: .00145 },
+        uBoatWake:{value:new Vector4()},
       },
       vertexShader: `
         uniform float uTime;
@@ -114,6 +122,7 @@ export class Environment {
         uniform vec3 uDeep;
         uniform vec3 uShallow;
         uniform vec3 uHorizon;
+        uniform vec4 uBoatWake;
         uniform sampler2D uTerrain;
         uniform samplerCube uSky;
         uniform float uSkyReady;
@@ -193,6 +202,22 @@ export class Environment {
           float wash = .5+.5*sin(depth*3.4-uTime*.65+swell.x*3.2);
           float foam = smoothstep(.65,.9,wash)*smoothstep(.38,.73,ripples.x)*shore*inside;
           water = mix(water, vec3(.72, .83, .78) * (.15 + .85 * uDay), foam * .56);
+          // Composite prop wash into the actual sea surface, so wave crests
+          // cannot hide a separate flat foam mesh or leave it floating above.
+          if(uBoatWake.w>.35){
+            vec2 delta=vWorld.xz-uBoatWake.xy;
+            float c=cos(uBoatWake.z),s=sin(uBoatWake.z);
+            vec2 local=vec2(c*delta.x-s*delta.y,s*delta.x+c*delta.y);
+            float aft=local.y-2.35,trailLength=4.+min(uBoatWake.w,11.5)*1.2;
+            if(aft>0. && aft<trailLength && abs(local.x)<4.){
+              float fade=pow(1.-aft/trailLength,1.3),width=.78+aft*.16;
+              float band=1.-smoothstep(.10,.65,abs(abs(local.x)-width));
+              float churn=exp(-local.x*local.x*2.2)*(1.-aft/trailLength);
+              float fleck=seaNoise(local*vec2(2.8,4.8)-vec2(0.,uTime*3.4)).x;
+              float wakeFoam=(band*.62+churn*.75)*fade*(.35+.65*fleck)*min(1.,uBoatWake.w/5.);
+              water=mix(water,vec3(.76,.87,.83)*(.15+.85*uDay),clamp(wakeFoam,0.,.8));
+            }
+          }
           float distanceFog = 1.0 - exp(-length(cameraPosition - vWorld) * uFogDensity);
           water = mix(water, uHorizon * (.32 + .68 * uDay), distanceFog);
           gl_FragColor = vec4(water, 1.0);

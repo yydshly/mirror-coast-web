@@ -4,8 +4,9 @@ import {COAST_ROUTE} from '../route/coast-route';
 import {Material} from '../world/palette';
 import type {VoxelWorld} from '../world/voxel';
 import {MINIMAP_ZOOMS,minimapViewport} from './map-viewport';
+import {COAST_SEA_LANE,seaReferenceRoute} from '../route/boat-route';
 
-export type MapSnapshot={position:MapPoint;bearing:number;mode:NavigationMode;target:string;completed:ReadonlySet<string>;car?:MapPoint;bicycle?:MapPoint;helicopter?:MapPoint;tourIndex?:number;autotouring:boolean};
+export type MapSnapshot={position:MapPoint;bearing:number;mode:NavigationMode;target:string;completed:ReadonlySet<string>;car?:MapPoint;bicycle?:MapPoint;helicopter?:MapPoint;boat?:MapPoint;tourIndex?:number;autotouring:boolean};
 const svgPoints=(points:readonly MapPoint[])=>points.map(p=>{const q=mapProjection(p);return`${q.x},${q.y}`;}).join(' ');
 const meters=(n:number)=>n>=1000?`${(n/1000).toFixed(1)} km`:`${Math.round(n)} m`;
 const pointDistance=(a:MapPoint,b:MapPoint)=>Math.hypot(a.x-b.x,a.z-b.z);
@@ -74,6 +75,7 @@ export class RegionMap {
    <rect width="1024" height="768" fill="#244a56"/><image data-map-terrain width="1024" height="768" preserveAspectRatio="none" style="image-rendering:pixelated"/>
    ${REGION_DISTRICTS.filter(d=>d.kind!=='hills').map(d=>{const q=mapProjection({x:d.minX,z:d.minZ});return`<rect x="${q.x}" y="${q.y}" width="${d.maxX-d.minX}" height="${d.maxZ-d.minZ}" fill="#cdd1ae0c" stroke="#ced9bd35" stroke-width="2" rx="8"/>`;}).join('')}
    ${NAVIGATION_LINES.map(l=>`<polyline points="${svgPoints(l.points)}" fill="none" stroke="${l.kind==='road'?'#c1b69b':'#a6c7a4'}" stroke-width="${l.kind==='road'?7:5}" ${l.kind==='foot'?'stroke-dasharray="9 8"':''} stroke-linejoin="round" stroke-linecap="round"/>`).join('')}
+   <polyline data-map-sea points="${svgPoints(COAST_SEA_LANE)}" fill="none" stroke="#79c7d1" stroke-width="5" stroke-dasharray="8 10" opacity=".75"/>
    <polyline data-map-air points="${svgPoints(COAST_ROUTE.map(p=>p.position))}" fill="none" stroke="#dda884" stroke-width="5" stroke-dasharray="12 12" opacity=".8" visibility="hidden"/>
    <polyline data-map-route points="" fill="none" stroke="#f5cf81" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
    <polyline data-map-lastmile points="" fill="none" stroke="#b6e2ad" stroke-width="8" stroke-dasharray="9 10" stroke-linecap="round"/>
@@ -107,7 +109,7 @@ export class RegionMap {
  toggle():void{if(this.isOpen)this.close();else this.open();}
  private navigate(drive:boolean):void{const id=this.selected;this.close();this.callbacks.navigate(id,drive);}
  private select(id:string):void{if(!destinationById(id))return;this.selected=id;this.routeKey='';if(this.snapshot)this.update(this.snapshot);}
- private position(id:string):MapPoint{return id==='bicycle'?this.snapshot?.bicycle??destinationById(id)!.position:id==='car'?this.snapshot?.car??destinationById(id)!.position:id==='helicopter'?this.snapshot?.helicopter??destinationById(id)!.position:destinationById(id)!.position;}
+ private position(id:string):MapPoint{return id==='boat'?this.snapshot?.boat??destinationById(id)!.position:id==='bicycle'?this.snapshot?.bicycle??destinationById(id)!.position:id==='car'?this.snapshot?.car??destinationById(id)!.position:id==='helicopter'?this.snapshot?.helicopter??destinationById(id)!.position:destinationById(id)!.position;}
  update(snapshot:MapSnapshot):void{
   this.snapshot=snapshot;
   this.updateViewport();
@@ -123,24 +125,26 @@ export class RegionMap {
   const district=REGION_DISTRICTS.find(d=>snapshot.position.x>=d.minX&&snapshot.position.x<d.maxX&&snapshot.position.z>=d.minZ&&snapshot.position.z<d.maxZ);
   const location=marker.outside?'区域外 · 箭头位于地图边缘':district?.name??'近岸与连接道路';
   this.root.querySelector('[data-map-location]')!.textContent=location;
-  this.dialog.querySelector('[data-map-current]')!.textContent=`你在${location} · X ${Math.round(snapshot.position.x)} / Z ${Math.round(snapshot.position.z)} · ${({walk:'步行',car:'驾驶汽车',helicopter:'直升机',fly:'自由镜头',bicycle:'自行车骑行'} as const)[snapshot.mode]}`;
+  this.dialog.querySelector('[data-map-current]')!.textContent=`你在${location} · X ${Math.round(snapshot.position.x)} / Z ${Math.round(snapshot.position.z)} · ${({walk:'步行',car:'驾驶汽车',helicopter:'直升机',fly:'自由镜头',bicycle:'自行车骑行',boat:'小艇航行'} as const)[snapshot.mode]}`;
   const key=`${Math.round(snapshot.position.x/4)},${Math.round(snapshot.position.z/4)},${Math.round(position.x/4)},${Math.round(position.z/4)},${snapshot.mode},${goal.id}`;
   if(key!==this.routeKey){
    this.routeKey=key;
-   const aerial=snapshot.mode==='fly'||snapshot.mode==='helicopter',roadVehicle=snapshot.mode==='car'||snapshot.mode==='bicycle',route=aerial?null:this.navigation.route(snapshot.position,roadVehicle&&goal.approach?goal.approach:position,roadVehicle);
+   const aerial=snapshot.mode==='fly'||snapshot.mode==='helicopter',roadVehicle=snapshot.mode==='car'||snapshot.mode==='bicycle',sea=snapshot.mode==='boat'?seaReferenceRoute(snapshot.position,position):null,route=sea?{points:sea,distance:sea.slice(1).reduce((sum,p,i)=>sum+pointDistance(p,sea[i]),0)}:aerial?null:this.navigation.route(snapshot.position,roadVehicle&&goal.approach?goal.approach:position,roadVehicle);
    this.routeDistance=route?.distance??pointDistance(snapshot.position,position);
-   for(const svg of this.svgs){const line=svg.querySelector('[data-map-route]')!;line.setAttribute('points',svgPoints(route?.points??[snapshot.position,position]));line.setAttribute('stroke-dasharray',aerial||!route?'7 12':'');svg.querySelector('[data-map-lastmile]')!.setAttribute('points',!aerial&&goal.trail?svgPoints(goal.trail):'');}
+   for(const svg of this.svgs){const line=svg.querySelector('[data-map-route]')!;line.setAttribute('points',svgPoints(route?.points??[snapshot.position,position]));line.setAttribute('stroke-dasharray',sea||aerial||!route?'7 12':'');svg.querySelector('[data-map-lastmile]')!.setAttribute('points',!aerial&&goal.trail?svgPoints(goal.trail):'');}
   }
   const onFoot=(snapshot.mode==='car'||snapshot.mode==='bicycle')&&goal.trail,arrived=pointDistance(snapshot.position,position)<12;
   const walkDistance=goal.trail?.slice(1).reduce((sum,p,i)=>sum+pointDistance(p,goal.trail![i]),0)??0,atApproach=!!onFoot&&!!goal.approach&&pointDistance(snapshot.position,goal.approach)<12;
   this.root.querySelector('[data-map-target-title]')!.textContent=snapshot.autotouring?`导览 · ${COAST_ROUTE[snapshot.tourIndex??0].name}`:atApproach?`已到入口 · ${goal.shortName}`:`${arrived?'已靠近':'目标'} · ${goal.shortName}`;
   this.root.querySelector('[data-map-target-note]')!.textContent=snapshot.autotouring?'橙色虚线为近岸航线 · M 查看外围':atApproach?`刹停后按 F 下车 · 继续步行约 ${meters(walkDistance)}`:onFoot?`${snapshot.mode==='bicycle'?'骑行':'驾车'}约 ${meters(this.routeDistance)} · 步行约 ${meters(walkDistance)}`:`${snapshot.mode==='fly'||snapshot.mode==='helicopter'?'方向参考':'沿路约'} ${meters(this.routeDistance)} · M 查看玩法`;
+  if(snapshot.mode==='boat')this.root.querySelector('[data-map-target-note]')!.textContent=`海路参考约 ${meters(this.routeDistance)} · 靠岸停稳 F 上岸`;
   this.dialog.querySelector('[data-map-kind]')!.textContent=goal.kind==='activity'?(snapshot.completed.has(goal.id)?'探索记录 · 已完成':'探索记录 · 靠近按 E 调查'):goal.kind==='vehicle'?'当前载具位置':'区域与玩法';
   this.dialog.querySelector('[data-map-place-title]')!.textContent=goal.name;
   this.dialog.querySelector('[data-map-description]')!.textContent=goal.description;
   this.dialog.querySelector('[data-map-access]')!.textContent=goal.access;
   this.dialog.querySelector('[data-map-distance]')!.textContent=onFoot?`驾车参考路线约 ${meters(this.routeDistance)} + 步行约 ${meters(walkDistance)}；停车后沿绿色虚线前往。`:`${snapshot.mode==='fly'||snapshot.mode==='helicopter'?'直线方向参考':'道路参考路线'} · 约 ${meters(this.routeDistance)}`;
-  this.dialog.querySelector<HTMLButtonElement>('[data-map-drive]')!.hidden=goal.kind==='vehicle'||goal.id==='old-city';
+  if(snapshot.mode==='boat')this.dialog.querySelector('[data-map-distance]')!.textContent=`海路参考 · 约 ${meters(this.routeDistance)}。手动沿岸航行，避开浅滩，靠泊后继续步行。`;
+  this.dialog.querySelector<HTMLButtonElement>('[data-map-drive]')!.hidden=snapshot.mode==='boat'||goal.kind==='vehicle'||goal.id==='old-city';
   this.dialog.querySelectorAll<HTMLElement>('[data-map-select]').forEach(b=>{b.classList.toggle('is-selected',b.dataset.mapSelect===goal.id);b.setAttribute('aria-pressed',String(b.dataset.mapSelect===goal.id));});
   for(const p of MAP_DESTINATIONS){const state=this.dialog.querySelector(`[data-map-completed="${p.id}"]`)!;state.textContent=snapshot.completed.has(p.id)?'已记录':'';}
   this.root.dataset.target=snapshot.target;this.root.dataset.position=JSON.stringify(snapshot.position);this.root.dataset.mode=snapshot.mode;this.root.dataset.bearing=String(snapshot.bearing);

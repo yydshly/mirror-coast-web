@@ -29,6 +29,8 @@ import { CoastalArt } from './rendering/coastal-art';
 import { Helicopter } from './vehicles/helicopter';
 import {helicopterExit,helipadClear} from './vehicles/helicopter-access';
 import {Bicycle,type BicycleState} from './vehicles/bicycle';
+import {CoastalBoat,type BoatState} from './vehicles/coastal-boat';
+import {BoatLandings} from './rendering/boat-landings';
 import {BuildingEntrances} from './rendering/building-entrances';
 import type { HelicopterState } from './vehicles/types';
 import { recordClip } from './rendering/flight-recorder';
@@ -121,6 +123,7 @@ async function boot(): Promise<void> {
   let restoredCar: CarState | undefined;
   let driving = false;
   let bicycle:Bicycle|undefined;let cycling=false;let restoredBicycle:BicycleState|undefined;
+  let boat:CoastalBoat|undefined;let boating=false;let restoredBoat:BoatState|undefined;
   let carObstacles: SceneObstacle[] = [];
   let helicopterObstacles:SceneObstacle[]=[];
   let recording = false;
@@ -175,9 +178,11 @@ async function boot(): Promise<void> {
     onReturnToPad:returnToHelipad,
     onBicycle:()=>setBicycleRiding(true),
     onExitBicycle:()=>setBicycleRiding(false),
+    onBoat:()=>setBoating(true),
+    onExitBoat:exitBoat,
     onDrive: () => setCarDriving(true),
     onExitDrive: () => setCarDriving(false, true),
-    onResetLook:()=>{if(cycling)bicycle?.resetLook();else if(driving)car?.resetLook();else if(piloting)helicopter?.resetLook();canvas.focus();},
+    onResetLook:()=>{if(boating)boat?.resetLook();else if(cycling)bicycle?.resetLook();else if(driving)car?.resetLook();else if(piloting)helicopter?.resetLook();canvas.focus();},
     onRecoverCar:recoverCurrentVehicle,
     onRecoverVehicle:recoverCurrentVehicle,
     onClearTraffic:()=>{void clearNearbyTraffic();},
@@ -301,6 +306,7 @@ async function boot(): Promise<void> {
         if(journey.state.active&&journey.chapter)trackedDestination=journey.chapter.target;
         restoredCar = saved.player.car;
         restoredBicycle=saved.player.bicycle;
+        restoredBoat=saved.player.boat;
         restoredPosture=saved.player.posture;
         restoredTraffic=saved.player.traffic??[];restoredProps=saved.player.props??[];
         saved.player.removedTraffic?.forEach(id=>removedTraffic.add(id));
@@ -406,6 +412,7 @@ async function boot(): Promise<void> {
   });
   physics.restore(restoredFragments);
   physics.restoreTraffic(restoredTraffic.filter(s=>!removedTraffic.has(s.id)));
+  const boatLandings=dressed?new BoatLandings(scene,world):undefined;
   const decorPhysics=new DecorationPhysics(scene,world,physics,restoredProps);
   for(const [scope,art]of [['coast',coastalArt],['street',streetArt],['region',regionArt],['neighborhood',neighborhood],['route',routeLandscape]] as const)if(art)decorPhysics.register(scope,art.decorationParts());
   if(yardProps)decorPhysics.register('yard',yardProps.parts);
@@ -518,6 +525,7 @@ async function boot(): Promise<void> {
   ui.setExploration(exploration === 'walk', currentPlace);
   ui.setWalkView(walker.viewMode);
   if(dressed&&!isYard){bicycle=new Bicycle(scene,world,canvas,()=>!ui.isHelpOpen&&!ui.isMenuOpen&&!fieldbook?.isOpen&&!signalConsole?.isOpen);bicycle.setObstacleProvider(()=>[...nearbyScene(bicycle!.position,16,8,true,false),...walkTransitions?.nearby(bicycle!.position)??[]]);bicycle.setRecoveryObstacleProvider(p=>[...nearbyScene(p,24,Infinity,true,false),...walkTransitions?.nearby(p)??[]]);if(restoredBicycle)bicycle.restore(restoredBicycle);ui.setBicycleState(bicycle.viewState);}
+  if(dressed){boat=new CoastalBoat(scene,world,canvas,()=>!ui.isHelpOpen&&!ui.isModalOpen&&!ui.isMenuOpen&&!fieldbook?.isOpen,(x,z)=>environment!.waterHeightAt(x,z));boat.setObstacleProvider(p=>nearbyScene(p,20,Infinity,true,true,false));if(restoredBoat)boat.restore(restoredBoat);ui.setBoatState(boat.viewState);}
 
   if(isYard){
     root.classList.add('is-response-yard');
@@ -542,11 +550,11 @@ async function boot(): Promise<void> {
 
   document.addEventListener('keydown', (event) => {
     if(signalConsole?.isOpen){if(event.code==='Escape'){event.preventDefault();event.stopImmediatePropagation();signalConsole.close();}return;}
-    handleGameShortcut(event,{ready,isLab,helpOpen:ui.isHelpOpen,menuOpen:ui.isMenuOpen,tourOpen:ui.isModalOpen,mapOpen:ui.isMapOpen,fieldbookOpen:fieldbook?.isOpen??false,hasFieldbook:!!fieldbook,walking:exploration==='walk',piloting,driving,cycling,observing:tool==='observe'}, {
+    handleGameShortcut(event,{ready,isLab,helpOpen:ui.isHelpOpen,menuOpen:ui.isMenuOpen,tourOpen:ui.isModalOpen,mapOpen:ui.isMapOpen,fieldbookOpen:fieldbook?.isOpen??false,hasFieldbook:!!fieldbook,walking:exploration==='walk',piloting,driving,cycling,boating,observing:tool==='observe'}, {
       toggleHelp:()=>ui.toggleHelp(),toggleFieldbook:()=>fieldbook?.toggle(),closeFieldbook:()=>fieldbook?.setOpen(false),releaseControls:releaseControlsForOverlay,
-      escape:()=>{if(cycling)setBicycleRiding(false);else if(piloting){if(helicopter?.viewState.grounded)exitHelicopter();else{setPilot(false);ui.toast('已悬停并释放驾驶；落地后按 F 下机，H 自动返航降落。');}}else if(driving)setCarDriving(false,true);else{controller?.stop();walker?.stop();}},
+      escape:()=>{if(boating)exitBoat();else if(cycling)setBicycleRiding(false);else if(piloting){if(helicopter?.viewState.grounded)exitHelicopter();else{setPilot(false);ui.toast('已悬停并释放驾驶；落地后按 F 下机，H 自动返航降落。');}}else if(driving)setCarDriving(false,true);else{controller?.stop();walker?.stop();}},
       togglePilot:()=>{if(piloting)exitHelicopter();else setPilot(true);},home,toggleMap:()=>ui.toggleMap(),interact:interactNearby,
-      returnToPad:returnToHelipad,exitVehicle:()=>{if(cycling)setBicycleRiding(false);else if(piloting)exitHelicopter();else if(driving)setCarDriving(false,true);},
+      returnToPad:returnToHelipad,exitVehicle:()=>{if(boating)exitBoat();else if(cycling)setBicycleRiding(false);else if(piloting)exitHelicopter();else if(driving)setCarDriving(false,true);},
       recoverVehicle:recoverCurrentVehicle,
       record:recordAction,presentation:()=>ui.togglePresentation(),
       closeMenu:()=>{ui.closeMenu();canvas.focus();},
@@ -604,7 +612,7 @@ async function boot(): Promise<void> {
     const detailDistance=160+(adaptiveResolution.scale-.8)*800;
     last = now;
     const bodyPosition = exploration === 'walk' && walker ? walker.motor.position : null;
-    const playerPosition = cycling&&bicycle?bicycle.position:driving && car ? car.position : bodyPosition;
+    const playerPosition = boating&&boat?boat.position:cycling&&bicycle?bicycle.position:driving && car ? car.position : bodyPosition;
     streetArt?.setPlayerPosition(playerPosition, driving ? 2.7 : .84);
     streetArt?.syncTraffic(physics!.trafficSnapshot(true));
     streetArt?.update(dt, playerPosition ?? camera.position, environment!.night.value, environment!.wetness.value,detailDistance);
@@ -629,7 +637,7 @@ async function boot(): Promise<void> {
     if (car) carObstacles = [...nearbyScene(car.position,20,8,false),...walkTransitions?.nearby(car.position)??[]];
     if(helicopter)helicopterObstacles=nearbyScene(helicopter.position,32,Infinity,false);
     work.obstacleQueries=performance.now()-actorMark;
-    if (ready && !changingSave && !reloading && !piloting && !driving && !cycling && !signalConsole?.isOpen&&!ui.isMenuOpen) {
+    if (ready && !changingSave && !reloading && !piloting && !driving && !cycling && !boating && !signalConsole?.isOpen&&!ui.isMenuOpen) {
       if (exploration === 'walk') walker!.update(dt);
       else controller!.update(dt);
     }
@@ -641,9 +649,10 @@ async function boot(): Promise<void> {
       }
     }
     markWork('actorsAndInput');
-    const focus = cycling&&bicycle?bicycle.position:driving && car ? car.position : piloting && helicopter ? helicopter.position : bodyPosition ?? camera.position;
+    const focus = boating&&boat?boat.position:cycling&&bicycle?bicycle.position:driving && car ? car.position : piloting && helicopter ? helicopter.position : bodyPosition ?? camera.position;
     streaming.update(dt,focus);
     environment!.update(dt, focus);
+    boatLandings?.update(environment!.night.value);
     coastalArt?.update(dt, focus,detailDistance);
     regionArt?.update(dt, focus, environment!.night.value,detailDistance);
     neighborhood?.update(dt,focus,environment!.night.value);
@@ -680,6 +689,7 @@ async function boot(): Promise<void> {
         document.querySelector<HTMLElement>('#app')!.dataset.ready = 'true';
         ui.setLoading(1);
         if(resumeTourOnReady){resumeTourOnReady=false;if(restoredVehicle?.flightMode==='return'){returnToHelipad();ui.toast('已从保存位置继续自动返航，正在重新检查通路。');}else{startCruise();ui.toast('已恢复自动游览，从刚才的航段接着飞；可随时暂停。');}}
+        else if(restoredBoat?.piloting){restoredBoat.piloting=false;setBoating(true);}
         else if(restoredBicycle?.riding){restoredBicycle.riding=false;setBicycleRiding(true);}
       }
     }
@@ -704,6 +714,9 @@ async function boot(): Promise<void> {
       helicopter?.afterPhysics(dt, camera);
       car?.afterPhysics(dt, camera);
       bicycle?.update(dt,cycling?camera:undefined);
+      boat?.update(dt,boating?camera:undefined,environment!.night.value);
+      if(boat)environment!.setBoatWake(boat.position,boat.headingAngle,boat.viewState.speed);
+      if(boating&&boat?.dismountReady)exitBoat();
       if(cycling&&bicycle?.dismountReady)setBicycleRiding(false);
       yardTarget?.update(physics!.trafficSnapshot(true));
       work.vehicleFollow=performance.now()-physicsMark;physicsMark=performance.now();
@@ -715,7 +728,7 @@ async function boot(): Promise<void> {
     environment?.setCameraPosition(camera.position);
     canvas.dataset.underwater=String(environment?.isUnderwater??false);
     targetTimer += dt;
-    if (targetTimer >= .08 && ready && !piloting && !driving) {
+    if (targetTimer >= .08 && ready && !piloting && !driving && !boating) {
       targetTimer = 0;
       const hit = tool==='observe'?null:currentEditTarget();
       target.visible = hit !== null && tool !== 'observe';
@@ -732,6 +745,7 @@ async function boot(): Promise<void> {
       if(helicopter)ui.setVehicleState(helicopter.viewState);
       if (car) ui.setCarState(car.viewState);
       if(bicycle){ui.setBicycleState(bicycle.viewState);canvas.dataset.bicycle=JSON.stringify({...bicycle.snapshot(),...bicycle.viewState});}
+      if(boat){ui.setBoatState(boat.viewState);canvas.dataset.boat=JSON.stringify({...boat.snapshot(),...boat.viewState});}
       if(entrances)canvas.dataset.entrances=JSON.stringify(entrances.diagnostics);
       const orbit=driving?car?.orbitState:piloting?helicopter?.orbitState:undefined;
       if(orbit)canvas.dataset.orbit=JSON.stringify(orbit);
@@ -813,11 +827,11 @@ async function boot(): Promise<void> {
   function selectTool(next: Tool): void {
     if(next!=='observe'&&exploration==='walk'&&walker?.actions.locked){ui.toast('请先起身或完成翻越，再使用挖除和爆破。');return;}
     controller?.cancelAction();walker?.cancelAction();
-    if((piloting || driving) && next!=='observe')return;
+    if((piloting || driving || boating) && next!=='observe')return;
     tool = next;
     ui.setTool(next);
     walker?.setAiming(next!=='observe');
-    if(next!=='observe' && ready && !changingSave && !piloting && !driving) {
+    if(next!=='observe' && ready && !changingSave && !piloting && !driving && !boating) {
       canvas.focus();
       if(exploration==='walk') { if(!walker?.isActive)void walker?.start(); }
       else if(!controller?.active)void controller?.start();
@@ -827,6 +841,7 @@ async function boot(): Promise<void> {
   function releaseControlsForOverlay():void{
     controller?.stop();walker?.stop();
     bicycle?.releaseControls();
+    boat?.releaseControls();
     if(driving)car?.releaseControls();if(piloting&&helicopter){helicopter.releaseControls(false);ui.setVehicleState(helicopter.viewState);}
     if(document.pointerLockElement===canvas)document.exitPointerLock();
   }
@@ -842,6 +857,7 @@ async function boot(): Promise<void> {
       view: walker?.viewMode ?? restoredView,
       car: car?.snapshot(),
       ...(bicycle?{bicycle:bicycle.snapshot()}:{}),
+      ...(boat?{boat:boat.snapshot()}:{}),
       discoveries:[...discoveries],
       navigationTarget:trackedDestination,
       journey:{...journey.state},
@@ -857,12 +873,13 @@ async function boot(): Promise<void> {
       player.rotation = { ...walker.pose.rotation };
     }
     if(cycling&&bicycle){player.position={...bicycle.position,y:bicycle.position.y+1.68};player.rotation={x:0,y:bicycle.snapshot().heading,z:0};}
+    if(boating&&boat){const pose=boat.snapshot();player.position={...pose.position,y:pose.position.y+1.68};player.rotation={x:0,y:boat.headingAngle,z:0};}
     const vehicle = helicopter?.snapshot();
     const signature = JSON.stringify([player, environment.hour, vehicle]);
     canvas.dataset.player = JSON.stringify(player.position);
     canvas.dataset.exploration = exploration;
-    canvas.dataset.view = cycling?'bicycle':driving ? 'car' : piloting ? 'helicopter' : exploration === 'walk' ? walker?.viewMode : 'free';
-    canvas.dataset.mode = cycling?'bicycle':driving ? 'car' : piloting ? 'helicopter' : exploration;
+    canvas.dataset.view = boating?'boat':cycling?'bicycle':driving ? 'car' : piloting ? 'helicopter' : exploration === 'walk' ? walker?.viewMode : 'free';
+    canvas.dataset.mode = boating?'boat':cycling?'bicycle':driving ? 'car' : piloting ? 'helicopter' : exploration;
     if (car) {canvas.dataset.car = JSON.stringify(car.snapshot());canvas.dataset.carWheels=JSON.stringify(car.wheelContacts);}
     canvas.dataset.camera = JSON.stringify({ x: camera.position.x, y: camera.position.y, z: camera.position.z });
     canvas.dataset.look = JSON.stringify(player.rotation);
@@ -875,7 +892,7 @@ async function boot(): Promise<void> {
   function home(): void {
     if (!ready || !controller) return;
     closeReadingPanels();
-    stopBicycle();
+    stopBicycle();stopBoat();
     if (piloting) setPilot(false);
     if (driving) setCarDriving(false);
     walker?.setEnabled(false); exploration = 'fly'; controller.setEnabled(true); ui.setExploration(false);
@@ -890,7 +907,7 @@ async function boot(): Promise<void> {
   function overview(): void {
     if (!ready || changingSave) return;
     closeReadingPanels();
-    stopBicycle();
+    stopBicycle();stopBoat();
     if (piloting) setPilot(false);
     if (driving) setCarDriving(false);
     walker?.setEnabled(false); controller?.setEnabled(true); controller?.stop(); exploration = 'fly';
@@ -901,17 +918,17 @@ async function boot(): Promise<void> {
 
   // One scene list feeds feet, road rescue, cars and helicopter cameras/bodies.
   // Cars receive the graded road triangles separately from the scenery index.
-  function sceneObstacleGroups():readonly (readonly SceneObstacle[])[]{return [journeyArt?.obstacles??[],harborPassageArt?.obstacles??[],coastalArt?.obstacles??[],streetArt?.obstacles??[],regionArt?.obstacles??[],southBay?.obstacles??[],outerCoast?.obstacles??[],neighborhood?.obstacles??[],entrances?.obstacles??[],routeLandscape?.obstacles??[],bicycle?.obstacles??[],explorationArt?.obstacles??[],streetLife?.obstacles??[],streetLife?.pedestrianObstacles??[],streetLife?.signalObstacles??[],decorPhysics.obstacles];}
+  function sceneObstacleGroups():readonly (readonly SceneObstacle[])[]{return [boatLandings?.obstacles??[],boat?.obstacles??[],journeyArt?.obstacles??[],harborPassageArt?.obstacles??[],coastalArt?.obstacles??[],streetArt?.obstacles??[],regionArt?.obstacles??[],southBay?.obstacles??[],outerCoast?.obstacles??[],neighborhood?.obstacles??[],entrances?.obstacles??[],routeLandscape?.obstacles??[],bicycle?.obstacles??[],explorationArt?.obstacles??[],streetLife?.obstacles??[],streetLife?.pedestrianObstacles??[],streetLife?.signalObstacles??[],decorPhysics.obstacles];}
   function ensureSceneIndex():void{
     if(indexedObstacleRevision===trafficObstacleRevision)return;
-    const fixed=[journeyArt?.obstacles??[],harborPassageArt?.obstacles??[],coastalArt?.obstacles??[],streetArt?.obstacles??[],regionArt?.obstacles??[],southBay?.obstacles??[],outerCoast?.obstacles??[],neighborhood?.obstacles??[],entrances?.obstacles??[],routeLandscape?.obstacles??[],explorationArt?.obstacles??[],streetLife?.signalObstacles??[]];
+    const fixed=[boatLandings?.obstacles??[],journeyArt?.obstacles??[],harborPassageArt?.obstacles??[],coastalArt?.obstacles??[],streetArt?.obstacles??[],regionArt?.obstacles??[],southBay?.obstacles??[],outerCoast?.obstacles??[],neighborhood?.obstacles??[],entrances?.obstacles??[],routeLandscape?.obstacles??[],explorationArt?.obstacles??[],streetLife?.signalObstacles??[]];
     sceneCollisions.rebuild(fixed);
     trafficScenery=[...coastalArt?.obstacles??[],...streetArt?.obstacles??[],...regionArt?.obstacles??[],...neighborhood?.obstacles??[],...routeLandscape?.obstacles??[],...explorationArt?.obstacles??[]];
     indexedObstacleRevision=trafficObstacleRevision;
   }
-  function nearbyScene(center:Vec3,radius=16,verticalRadius=Infinity,withPhysics=true,withBicycle=true):SceneObstacle[]{
+  function nearbyScene(center:Vec3,radius=16,verticalRadius=Infinity,withPhysics=true,withBicycle=true,withBoat=true):SceneObstacle[]{
     ensureSceneIndex();
-    return sceneCollisions.query(center,radius,verticalRadius,[streetLife?.obstacles??[],streetLife?.pedestrianObstacles??[],decorPhysics.obstacles,...withBicycle?[bicycle?.obstacles??[]]:[],...withPhysics?[physics?.walkObstacles??[]]:[]]);
+    return sceneCollisions.query(center,radius,verticalRadius,[streetLife?.obstacles??[],streetLife?.pedestrianObstacles??[],decorPhysics.obstacles,...withBoat?[boat?.obstacles??[]]:[],...withBicycle?[bicycle?.obstacles??[]]:[],...withPhysics?[physics?.walkObstacles??[]]:[]]);
   }
   function refreshObstacles(center: Vec3): void {
     nearbyObstacles = nearbyScene(center,16,8);
@@ -952,20 +969,22 @@ async function boot(): Promise<void> {
   }
 
   function recoverCurrentVehicle():void{
-    if(!ready||changingSave||reloading||(!cycling&&!driving&&!piloting)||performance.now()-lastVehicleRecovery<1000)return;
+    if(!ready||changingSave||reloading||(!boating&&!cycling&&!driving&&!piloting)||performance.now()-lastVehicleRecovery<1000)return;
     lastVehicleRecovery=performance.now();
-    const recovered=cycling?bicycle?.recoverNearby():driving?car?.recoverNearby():helicopter?.recoverNearby();
+    const recovered=boating?boat?.recoverNearby():cycling?bicycle?.recoverNearby():driving?car?.recoverNearby():helicopter?.recoverNearby();
+    if(boat)ui.setBoatState(boat.viewState);
     if(bicycle)ui.setBicycleState(bicycle.viewState);if(car)ui.setCarState(car.viewState);if(helicopter)ui.setVehicleState(helicopter.viewState);
-    ui.toast(recovered?cycling?'自行车已挪到附近稳固地面，按 W 继续骑行。':driving?'汽车已扶正到安全地面，按 W 继续驾驶。':'直升机已脱离障碍并在附近安全空域悬停；按键可继续驾驶，H 重新返航。':'没有找到可安全停放的地点，载具保持原位。',!recovered);
+    ui.toast(recovered?boating?'小艇已回到可通航的深水，W 继续航行。':cycling?'自行车已挪到附近稳固地面，按 W 继续骑行。':driving?'汽车已扶正到安全地面，按 W 继续驾驶。':'直升机已脱离障碍并在附近安全空域悬停；按键可继续驾驶，H 重新返航。':'没有找到可安全停放的地点，载具保持原位。',!recovered);
     canvas.focus();savePose();
     if(recovered)void persistence?.flush().catch(error=>ui.toast(`脱困位置保存失败：${errorMessage(error)}`,true));
   }
 
-  function nearbyInteraction():{kind:'harbor-log'}|{kind:'harbor-repair'}|{kind:'bell'}|{kind:'bicycle'}|{kind:'entrance'}|{kind:'bay';id:string}|{kind:'beach'}|{kind:'site';prompt:DiscoveryPrompt}|{kind:'car'}|{kind:'helicopter'}|{kind:'ground';action:GroundInteraction}|null {
+  function nearbyInteraction():{kind:'boat'}|{kind:'harbor-log'}|{kind:'harbor-repair'}|{kind:'bell'}|{kind:'bicycle'}|{kind:'entrance'}|{kind:'bay';id:string}|{kind:'beach'}|{kind:'site';prompt:DiscoveryPrompt}|{kind:'car'}|{kind:'helicopter'}|{kind:'ground';action:GroundInteraction}|null {
     if(!ready||isLab||!walker||exploration!=='walk'||piloting||driving||tool!=='observe'||changingSave)return null;
     const eyes=walker.pose.position;
     const ground=walker.bodyInteraction;
     if(walker.actions.locked)return ground?{kind:'ground',action:ground}:null;
+    if(boat?.canBoard(walker.motor.position)&&visibleFrom(world,eyes,boat.boardingPoint))return{kind:'boat'};
     if(walker.grounded&&harborPassage){
       if(harborPassage.nearLog(walker.motor.position,eyes))return{kind:'harbor-log'};
       if(harborPassage.status==='broken'&&Math.hypot(walker.motor.position.x-8,walker.motor.position.z-232.5)<3.3&&Math.abs(walker.motor.position.y-15)<.55)return{kind:'harbor-repair'};
@@ -997,6 +1016,7 @@ async function boot(): Promise<void> {
       ui.toast(harborPassage!.state.beaconLinked?'航路记录仍在。西岬航标和渔港引航灯已接通，清出的通路也已保存。':'航路记录：南湾旧救援船曾沿这条航路归港，西岬航标方位 205°。记录已存入 J 手记；先取车去南湾。');savePose();void persistence?.flush().catch(error=>ui.toast(`航路记录保存失败：${errorMessage(error)}`,true));return;
     }
     if(interaction.kind==='bicycle'){setBicycleRiding(true);return;}
+    if(interaction.kind==='boat'){setBoating(true);return;}
     if(interaction.kind==='entrance'){ui.toast('住宅／商店入口 · 这栋楼的室内尚未开放。渔港的开放门洞可以直接走入。');return;}
     if(interaction.kind==='bell'){outerCoast?.ringBell(!muted);ui.toast('铜钟随海风摇摆。');return;}
     if(interaction.kind==='bay'){ui.toast(southBay!.interact(interaction.id));if(interaction.id==='pool')trackedDestination='bay-overlook';else if(southBay!.snapshot.kiteFlying)trackedDestination=discoveries.has('tidal-rescue')?'bay-pools':'tidal-rescue';savePose();return;}
@@ -1063,9 +1083,9 @@ async function boot(): Promise<void> {
       fieldbook.setRoute(displayTarget,place?.name??'探索地点',Math.hypot(dx,dz),arrow);
     }
     camera.getWorldDirection(direction);
-    ui.setMapState({position:focus,bearing:Math.atan2(direction.x,-direction.z),mode:cycling?'bicycle':driving?'car':piloting?'helicopter':exploration,target:displayTarget,completed:discoveries,car:car?.position,bicycle:bicycle?.position,helicopter:helicopter?.position,tourIndex:piloting&&tour&&tour.flightMode!=='return'&&tour.tourStatus!=='idle'?tour.routeIndex:undefined,autotouring:!!tour?.autopilot&&tour.flightMode!=='return'});
+    ui.setMapState({position:focus,bearing:Math.atan2(direction.x,-direction.z),mode:boating?'boat':cycling?'bicycle':driving?'car':piloting?'helicopter':exploration,target:displayTarget,completed:discoveries,boat:boat?.position,car:car?.position,bicycle:bicycle?.position,helicopter:helicopter?.position,tourIndex:piloting&&tour&&tour.flightMode!=='return'&&tour.tourStatus!=='idle'?tour.routeIndex:undefined,autotouring:!!tour?.autopilot&&tour.flightMode!=='return'});
     const interaction=nearbyInteraction();
-    fieldbook.setPrompt(!interaction?null:interaction.kind==='harbor-log'?'查看航路记录 · 西岬 205°':interaction.kind==='harbor-repair'?'用备用木板补齐支栈桥缺口':interaction.kind==='bicycle'?'骑上自行车':interaction.kind==='entrance'?'查看建筑入口':interaction.kind==='bell'?'拉动海风铜钟':interaction.kind==='bay'?southBay!.label(interaction.id):interaction.kind==='beach'?'记录潮线漂流木 · 沿海一日':interaction.kind==='ground'?interaction.action.label:interaction.kind==='car'?'驾驶旅行车':interaction.kind==='helicopter'?'登上直升机':
+    fieldbook.setPrompt(!interaction?null:interaction.kind==='boat'?'驾驶海岸小艇':interaction.kind==='harbor-log'?'查看航路记录 · 西岬 205°':interaction.kind==='harbor-repair'?'用备用木板补齐支栈桥缺口':interaction.kind==='bicycle'?'骑上自行车':interaction.kind==='entrance'?'查看建筑入口':interaction.kind==='bell'?'拉动海风铜钟':interaction.kind==='bay'?southBay!.label(interaction.id):interaction.kind==='beach'?'记录潮线漂流木 · 沿海一日':interaction.kind==='ground'?interaction.action.label:interaction.kind==='car'?'驾驶旅行车':interaction.kind==='helicopter'?'登上直升机':
       discoveries.has(interaction.prompt.site.id as DiscoveryId)?`${interaction.prompt.site.id==='tidal-rescue'?'查看':'再次调试'} ${interaction.prompt.site.title}`:
       interaction.prompt.intact?interaction.prompt.site.actionHint:`调查 ${interaction.prompt.site.title} 残骸`);
     canvas.dataset.discoveries=JSON.stringify([...discoveries]);
@@ -1075,7 +1095,7 @@ async function boot(): Promise<void> {
 
   let nextEditAt=0;
   function edit(): void {
-    if (!ready || !persistence || changingSave || piloting || driving || cycling || tool === 'observe') return;
+    if (!ready || !persistence || changingSave || piloting || driving || cycling || boating || tool === 'observe') return;
     if(performance.now()<nextEditAt)return;
     const hit = currentEditTarget();
     if (!hit) return;
@@ -1194,7 +1214,7 @@ async function boot(): Promise<void> {
     if (!ready || isLab || !helicopter || changingSave || reloading) return;
     if (active) {
       closeReadingPanels();
-      stopBicycle();
+      stopBicycle();stopBoat();
       if (driving) setCarDriving(false);
       walker?.setEnabled(false); exploration = 'fly'; ui.setExploration(false);
       selectTool('observe');
@@ -1225,9 +1245,23 @@ async function boot(): Promise<void> {
     if(!ready||isLab||!helicopter||changingSave||reloading)return;
     closeReadingPanels();if(!piloting)setPilot(true);helicopter.startReturnHome();ui.setVehicleState(helicopter.viewState);canvas.focus();savePose();
   }
+  function stopBoat():void{if(!boating)return;boating=false;boat?.setPiloting(false);if(boat)ui.setBoatState(boat.viewState);}
+  function setBoating(active:boolean):void{
+    if(!ready||!boat||!walker||changingSave||reloading)return;
+    if(!active){exitBoat();return;}if(boating)return;
+    closeReadingPanels();stopBicycle();if(piloting)setPilot(false);if(driving)setCarDriving(false);
+    walker.setEnabled(false);controller?.setEnabled(false);exploration='fly';boating=true;boat.setPiloting(true);selectTool('observe');camera.fov=62;camera.updateProjectionMatrix();ui.setExploration(false);ui.setBoatState(boat.viewState);ui.setFlying(true);canvas.focus();if(!trackedDestination.startsWith('boat-'))trackedDestination='boat-bay';ui.toast('W 出航，A / D 操舵，Space 减速；M 查看靠泊点，靠岸停稳后 F 上岸。');savePose();
+  }
+  function exitBoat():boolean{
+    if(!boating||!boat||!walker)return false;
+    if(Math.abs(boat.viewState.speed)>.15){boat.requestDismount();ui.toast('正在减速，停稳后寻找船旁的安全上岸位置。');return false;}
+    boat.cancelDismount();const feet=boat.exitPosition(p=>{refreshObstacles(p);return walker!.motor.canOccupy(p);});
+    if(!feet){ui.toast('附近没有可安全上岸的地面。请驶近码头、南湾或西岬栈桥；M 查看靠泊点。');return false;}
+    const yaw=boat.exitHeading(feet);stopBoat();putWalkerAt(feet,yaw);ui.toast('已靠泊上岸，小艇留在原处。沿木阶走向岸上，靠近小艇按 E 可再次出航。');return true;
+  }
   function stopBicycle():void{if(!cycling)return;cycling=false;bicycle?.setRiding(false);if(bicycle)ui.setBicycleState(bicycle.viewState);}
   function setBicycleRiding(active:boolean):void{
-    if(!ready||!bicycle||!walker||changingSave)return;if(active){closeReadingPanels();if(piloting)setPilot(false);if(driving)setCarDriving(false);walker.setEnabled(false);controller?.setEnabled(false);exploration='fly';cycling=true;bicycle.setRiding(true);ui.setExploration(false);ui.setFlying(true);canvas.focus();camera.fov=64;camera.updateProjectionMatrix();ui.toast('W 蹬车，Space 刹车，F / E 下车；鼠标拖动环视，M 查看地图。');}
+    if(!ready||!bicycle||!walker||changingSave)return;if(active){closeReadingPanels();stopBoat();if(piloting)setPilot(false);if(driving)setCarDriving(false);walker.setEnabled(false);controller?.setEnabled(false);exploration='fly';cycling=true;bicycle.setRiding(true);ui.setExploration(false);ui.setFlying(true);canvas.focus();camera.fov=64;camera.updateProjectionMatrix();ui.toast('W 蹬车，Space 刹车，F / E 下车；鼠标拖动环视，M 查看地图。');}
     else{
       if(Math.abs(bicycle.viewState.speed)>.15){bicycle.requestDismount();ui.toast('正在刹车，停稳后再下车并放下脚撑。');return;}
       bicycle.releaseControls();
@@ -1253,7 +1287,7 @@ async function boot(): Promise<void> {
     }
     if (active) {
       closeReadingPanels();
-      stopBicycle();
+      stopBicycle();stopBoat();
       if (piloting) setPilot(false);
       walker?.setEnabled(false); controller?.setEnabled(false);
       exploration = 'fly'; driving = true; car.setDriving(true);
@@ -1283,8 +1317,9 @@ async function boot(): Promise<void> {
 
   function startWalking(placeId?: string): void {
     if (!ready || isLab || changingSave || !walker) return;
+    if(boating&&!placeId){if(exitBoat())void walker.start();return;}
     closeReadingPanels();
-    stopBicycle();
+    stopBicycle();stopBoat();
     if (piloting) setPilot(false);
     if (driving) setCarDriving(false);
     controller?.setEnabled(false);
@@ -1304,7 +1339,7 @@ async function boot(): Promise<void> {
   function startFreeFlight(): void {
     if (!ready || changingSave) return;
     closeReadingPanels();
-    stopBicycle();
+    stopBicycle();stopBoat();
     if (piloting) setPilot(false);
     if (driving) setCarDriving(false);
     walker?.setEnabled(false); exploration = 'fly'; controller?.setEnabled(true);

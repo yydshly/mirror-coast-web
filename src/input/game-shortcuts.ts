@@ -1,4 +1,4 @@
-export type GameShortcutState={ready:boolean;isLab:boolean;helpOpen:boolean;menuOpen?:boolean;tourOpen?:boolean;mapOpen?:boolean;fieldbookOpen:boolean;hasFieldbook:boolean;walking:boolean;piloting:boolean;driving:boolean;cycling?:boolean;observing:boolean};
+export type GameShortcutState={ready:boolean;isLab:boolean;helpOpen:boolean;menuOpen?:boolean;tourOpen?:boolean;mapOpen?:boolean;fieldbookOpen:boolean;hasFieldbook:boolean;walking:boolean;piloting:boolean;driving:boolean;cycling?:boolean;boating?:boolean;observing:boolean};
 export type GameShortcutActions={toggleHelp:()=>void;toggleFieldbook:()=>void;closeFieldbook:()=>void;closeMenu?:()=>void;releaseControls:()=>void;escape:()=>void;togglePilot:()=>void;home:()=>void;toggleMap:()=>void;interact:()=>void;record?:()=>void;presentation?:()=>void;exitVehicle?:()=>void;returnToPad?:()=>void;recoverVehicle?:()=>void};
 const movementKeys=new Set(['KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE','KeyZ','KeyC','KeyX','Space','ShiftLeft','ShiftRight','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Digit1','Digit2','Digit3','KeyR','KeyV','KeyH','KeyG']);
 
@@ -44,10 +44,10 @@ export function handleGameShortcut(event:KeyboardEvent,state:GameShortcutState,a
   }
   if(event.code==='KeyM'&&!state.isLab&&!(event.target as HTMLElement|null)?.matches?.('input,textarea,select,[contenteditable="true"]')){consume();if(!event.repeat)actions.toggleMap();return true;}
   if(uiFocus||event.repeat||state.isLab)return false;
-  if(event.code==='KeyG'&&(state.piloting||state.driving||state.cycling)&&actions.recoverVehicle){consume();actions.recoverVehicle();return true;}
-  if(event.code==='KeyF'&&(state.piloting||state.driving||state.cycling)&&actions.exitVehicle){consume();actions.exitVehicle();return true;}
+  if(event.code==='KeyG'&&(state.piloting||state.driving||state.cycling||state.boating)&&actions.recoverVehicle){consume();actions.recoverVehicle();return true;}
+  if(event.code==='KeyF'&&(state.piloting||state.driving||state.cycling||state.boating)&&actions.exitVehicle){consume();actions.exitVehicle();return true;}
   if(event.code==='KeyH'&&actions.returnToPad){consume();actions.returnToPad();return true;}
-  if(event.code==='KeyE'&&state.cycling&&actions.exitVehicle){consume();actions.exitVehicle();return true;}
+  if(event.code==='KeyE'&&(state.cycling||state.boating)&&actions.exitVehicle){consume();actions.exitVehicle();return true;}
   if(event.code==='KeyE'&&state.walking&&!state.piloting&&!state.driving&&state.observing){consume();actions.interact();return true;}
   if(event.code==='KeyV'){consume();actions.togglePilot();return true;}
   if(event.code==='KeyH'&&state.piloting){consume();actions.home();return true;}

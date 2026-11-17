@@ -10,7 +10,7 @@ function setup(overrides:Partial<GameShortcutState>={}){
   return {state,actions,target,press};
 }
 describe('game interaction and overlay shortcut routing',()=>{
-  it.each([{cycling:true},{piloting:true},{driving:true}])('offers G recovery in each vehicle and leaves H as return flight',mode=>{
+  it.each([{cycling:true},{piloting:true},{driving:true},{boating:true}])('offers G recovery in each vehicle and leaves H as return flight',mode=>{
     const {actions,state,press}=setup({...mode,walking:false});actions.recoverVehicle=vi.fn();actions.returnToPad=vi.fn();
     expect(press('KeyG').defaultPrevented).toBe(true);expect(actions.recoverVehicle).toHaveBeenCalledOnce();
     press('KeyG',true);expect(actions.recoverVehicle).toHaveBeenCalledOnce();
